@@ -64,4 +64,4 @@ For cloud providers like Supabase or Neon, use the pooled connection string they
 To populate the database with default users (Admin, CEO, Cashier), run:
 ```bash
 node seed.js
-```
+```# FootprintRetailSystem
