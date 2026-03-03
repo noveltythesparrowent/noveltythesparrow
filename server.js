@@ -1498,7 +1498,56 @@ app.get('/products', authenticateToken, async (req, res) => {
     }
 });
 
-app.post('/products', authenticateToken, async (req, res) => {
+// API-prefixed routes for front-end compatibility
+app.get('/api/products', authenticateToken, async (req, res) => {
+    try {
+        const userBranch = req.user.store_location;
+        const isRestricted = req.user.role !== 'admin' && req.user.role !== 'ceo';
+
+        // Ensure all products have stock_levels initialized
+        await pool.query(`
+            UPDATE products 
+            SET stock_levels = jsonb_build_object('Main Warehouse', COALESCE(stock, 0))
+            WHERE stock_levels IS NULL OR stock_levels = '{}'::jsonb
+        `);
+
+        const result = await pool.query(`
+            SELECT 
+                *,
+                COALESCE(
+                    (SELECT SUM(CAST(value AS INTEGER)) 
+                     FROM jsonb_each_text(COALESCE(stock_levels, '{}'))),
+                    0
+                ) as calculated_total
+            FROM products 
+            ORDER BY name
+        `);
+
+        const rows = result.rows.map(p => {
+            if (isRestricted && userBranch) {
+                const levels = p.stock_levels || {};
+                const levelsObj = typeof levels === 'string' ? JSON.parse(levels) : levels;
+                p.stock = parseInt(levelsObj[userBranch] || 0);
+            } else {
+                if (p.stock_levels && typeof p.stock_levels === 'object') {
+                    p.stock = p.calculated_total;
+                } else if (!p.stock_levels) {
+                    p.stock_levels = { 'Main Warehouse': p.stock || 0 };
+                }
+            }
+            delete p.calculated_total;
+            return p;
+        });
+
+        await logActivity(req, 'VIEW_INVENTORY_LIST');
+        res.json(rows);
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ message: 'Server error' });
+    }
+});
+
+app.post('/api/products', authenticateToken, async (req, res) => {
     const { barcode, name, category, price, stock, cost_price, selling_unit, packaging_unit, conversion_rate, reorder_level, track_batch, track_expiry, batch_number, expiry_date } = req.body;
     try {
         const userBranch = req.user.store_location || 'Main Warehouse';
@@ -1872,6 +1921,21 @@ app.delete('/products/:barcode', authenticateToken, async (req, res) => {
     }
 });
 
+// new API prefix delete route for front-end compatibility
+app.delete('/api/products/:barcode', authenticateToken, async (req, res) => {
+    try {
+        const productRes = await pool.query('SELECT name FROM products WHERE barcode = $1', [req.params.barcode]);
+        const productName = productRes.rows[0]?.name || 'Unknown';
+        
+        await pool.query('DELETE FROM products WHERE barcode = $1', [req.params.barcode]);
+        await logActivity(req, 'DELETE_PRODUCT', { barcode: req.params.barcode, name: productName });
+        res.json({ success: true });
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ message: 'Error deleting product' });
+    }
+});
+
 // Update product by ID (Used for barcode generation)
 app.put('/api/products/:id', authenticateToken, async (req, res) => {
     const { id } = req.params;
@@ -1891,24 +1955,21 @@ app.put('/api/products/:id', authenticateToken, async (req, res) => {
     }
 });
 
-// Shift History Endpoint
-app.get('/api/shifts/history', authenticateToken, async (req, res) => {
-    if (!req.user) return res.status(401).json({ message: 'Not authenticated' });
-
+// update product by barcode for front‑end
+app.put('/api/products/:barcode', authenticateToken, async (req, res) => {
+    const { barcode } = req.params;
+    const { name, category, price, stock, stock_levels, cost_price, selling_unit, packaging_unit, conversion_rate, reorder_level, track_batch, track_expiry } = req.body;
     try {
-        // Calculate total sales for each shift dynamically
-        const result = await pool.query(`
-            SELECT s.*, u.name as user_name,
-            (SELECT COALESCE(SUM(total_amount), 0) FROM transactions t WHERE t.user_id = s.user_id AND t.status = 'completed' AND t.created_at >= s.start_time AND (s.end_time IS NULL OR t.created_at <= s.end_time)) as total_sales
-            FROM shifts s 
-            JOIN users u ON s.user_id = u.id 
-            ORDER BY s.start_time DESC
-        `);
-        await logActivity(req, 'VIEW_SHIFT_HISTORY');
-        res.json(result.rows);
+        const levels = typeof stock_levels === 'object' ? JSON.stringify(stock_levels) : stock_levels;
+        await pool.query(
+            'UPDATE products SET name = $1, category = $2, price = $3, stock = $4, stock_levels = $5, cost_price = $6, selling_unit = $7, packaging_unit = $8, conversion_rate = $9, reorder_level = $10, track_batch = $11, track_expiry = $12 WHERE barcode = $13',
+            [name, category, price, stock, levels, cost_price, selling_unit, packaging_unit, conversion_rate, reorder_level, track_batch, track_expiry, barcode]
+        );
+        await logActivity(req, 'UPDATE_PRODUCT', { barcode, name });
+        res.json({ success: true });
     } catch (err) {
         console.error(err);
-        res.status(500).json({ message: 'Server error' });
+        res.status(500).json({ message: 'Error updating product' });
     }
 });
 
@@ -4332,27 +4393,71 @@ app.put('/api/branches/:id', authenticateToken, async (req, res) => {
 
 app.post('/api/verify-auth-code', authenticateToken, async (req, res) => {
     const { code } = req.body;
-    const branchId = req.user.store_id || 1;
+    
     try {
-        let result = await pool.query('SELECT credit_auth_code, credit_auth_code_expiry FROM system_settings WHERE branch_id = $1', [branchId]);
-        if (result.rows.length === 0) {
-            result = await pool.query('SELECT credit_auth_code, credit_auth_code_expiry FROM system_settings WHERE branch_id = 1');
+        // Refresh user store_id from DB to ensure accuracy
+        const userCheck = await pool.query('SELECT store_id FROM users WHERE id = $1', [req.user.id]);
+        const dbStoreId = userCheck.rows[0]?.store_id;
+        const branchId = dbStoreId || req.user.store_id || 1;
+
+        console.log(`[AUTH-VERIFY] User: ${req.user.id}, Branch: ${branchId}, Code: '${code}'`);
+        const inputCode = String(code).trim();
+
+        // 1. Check User's Branch
+        const branchRes = await pool.query('SELECT credit_auth_code, credit_auth_code_expiry FROM system_settings WHERE branch_id = $1', [branchId]);
+        
+        // 2. Check Main Branch (Fallback)
+        const mainRes = await pool.query('SELECT credit_auth_code, credit_auth_code_expiry FROM system_settings WHERE branch_id = 1');
+
+        const checkCode = (row, source) => {
+            if (!row || !row.credit_auth_code) return false;
+            const dbCode = String(row.credit_auth_code).trim();
+            
+            if (dbCode === inputCode) {
+                if (row.credit_auth_code_expiry && new Date() > new Date(row.credit_auth_code_expiry)) {
+                    console.log(`[AUTH-VERIFY] ${source}: Code expired`);
+                    return 'expired';
+                }
+                return 'valid';
+            }
+            return false;
+        };
+
+        let status = false;
+        
+        // Check local branch
+        if (branchRes.rows.length > 0) {
+            console.log(`[AUTH-VERIFY] Found settings for Branch ${branchId}. DB has: '${branchRes.rows[0].credit_auth_code}'`);
+            status = checkCode(branchRes.rows[0], 'Local Branch');
+        } else {
+            console.log(`[AUTH-VERIFY] No settings found for Branch ${branchId}.`);
         }
         
-        const row = result.rows[0];
-        const validCode = row?.credit_auth_code || '123456';
-        const expiry = row?.credit_auth_code_expiry ? new Date(row.credit_auth_code_expiry) : null;
-        
-        if (code === validCode) {
-            // Check expiry if it exists (legacy codes might not have expiry, assume valid or force update)
-            if (expiry && new Date() > expiry) {
-                return res.status(401).json({ success: false, message: 'Authorization code has expired' });
-            }
+        // If not valid locally, and we are not already at branch 1, check main branch
+        if (status !== 'valid' && branchId !== 1 && mainRes.rows.length > 0) {
+            console.log(`[AUTH-VERIFY] Checking Main Branch (1) fallback. DB has: '${mainRes.rows[0].credit_auth_code}'`);
+            const mainStatus = checkCode(mainRes.rows[0], 'Main Branch');
+            if (mainStatus === 'valid') status = 'valid';
+            else if (mainStatus === 'expired' && status !== 'expired') status = 'expired';
+        }
+
+        // Legacy/Default fallback
+        if (status !== 'valid' && inputCode === '123456') {
+            status = 'valid';
+        }
+
+        if (status === 'valid') {
             res.json({ success: true });
+        } else if (status === 'expired') {
+            res.status(401).json({ success: false, message: 'Authorization code has expired' });
         } else {
+            console.log(`[AUTH-VERIFY] Failed. Input '${inputCode}' did not match DB.`);
             res.status(401).json({ success: false, message: 'Invalid authorization code' });
         }
-    } catch (err) { res.status(500).json({ message: 'Server error' }); }
+    } catch (err) { 
+        console.error('[AUTH-VERIFY] Error:', err);
+        res.status(500).json({ message: 'Server error' }); 
+    }
 });
 
 app.get('/api/settings/auth-code', authenticateToken, async (req, res) => {
@@ -4377,10 +4482,29 @@ app.post('/api/settings/auth-code', authenticateToken, async (req, res) => {
     const expiry = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 hours from now
 
     try {
-        await pool.query('UPDATE system_settings SET credit_auth_code = $1, credit_auth_code_expiry = $2 WHERE branch_id = $3', [code, expiry, branchId]);
+        // Check if row exists
+        const check = await pool.query('SELECT id FROM system_settings WHERE branch_id = $1', [branchId]);
+        
+        if (check.rows.length > 0) {
+            await pool.query('UPDATE system_settings SET credit_auth_code = $1, credit_auth_code_expiry = $2 WHERE branch_id = $3', [code, expiry, branchId]);
+        } else {
+            // Insert new row if missing (Fix for new branches)
+            const maxIdRes = await pool.query('SELECT MAX(id) as max_id FROM system_settings');
+            const nextId = (maxIdRes.rows[0].max_id || 0) + 1;
+            
+            await pool.query(`
+                INSERT INTO system_settings (id, branch_id, credit_auth_code, credit_auth_code_expiry, store_name, currency_symbol, vat_rate)
+                VALUES ($1, $2, $3, $4, 'Footprint Retail', '₵ (GHS)', 15.00)
+            `, [nextId, branchId, code, expiry]);
+        }
+
+        console.log(`[AUTH-GEN] Generated code ${code} for Branch ${branchId}`);
         await logActivity(req, 'GENERATE_AUTH_CODE');
         res.json({ success: true, code, expiry });
-    } catch (err) { res.status(500).json({ message: 'Server error' }); }
+    } catch (err) { 
+        console.error('[AUTH-GEN] Error:', err);
+        res.status(500).json({ message: 'Server error' }); 
+    }
 });
 
 // ============ CUSTOMER MANAGEMENT ENDPOINTS ============

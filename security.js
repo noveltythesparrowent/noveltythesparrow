@@ -3,6 +3,9 @@ const helmet = require('helmet');
 const { validationResult } = require('express-validator');
 
 // Security middleware
+// Helmet configuration with conditional HSTS (disable on localhost/dev)
+const isLocalhost = process.env.NODE_ENV !== 'production';
+
 exports.securityHeaders = helmet({
     contentSecurityPolicy: {
         directives: {
@@ -16,11 +19,14 @@ exports.securityHeaders = helmet({
             workerSrc: ["'self'", "blob:"]
         }
     },
-    hsts: {
-        maxAge: 31536000,
-        includeSubDomains: true,
-        preload: true
-    },
+    // only send HSTS headers in production environments
+    hsts: isLocalhost
+        ? false
+        : {
+              maxAge: 31536000,
+              includeSubDomains: true,
+              preload: true
+          },
     crossOriginResourcePolicy: { policy: "cross-origin" },
     crossOriginEmbedderPolicy: false
 });

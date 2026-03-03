@@ -1388,8 +1388,14 @@ function closeManagerTokenModal() {
 }
 
 async function verifyManagerToken() {
-    const token = document.getElementById('managerTokenInput').value;
+    const token = document.getElementById('managerTokenInput').value.trim();
     const errorEl = document.getElementById('tokenError');
+    
+    if (!token) {
+        errorEl.textContent = "Please enter a code";
+        errorEl.style.display = 'block';
+        return;
+    }
     
     try {
         const authToken = sessionStorage.getItem('authToken');
@@ -1403,13 +1409,16 @@ async function verifyManagerToken() {
             closeManagerTokenModal();
             openCreditSaleModal(); // Open the sale modal instead of redirecting
         } else {
-            throw new Error('Invalid Token');
+            const data = await res.json();
+            errorEl.textContent = data.message || "Invalid Authorization Code";
+            errorEl.style.display = 'block';
+            document.getElementById('managerTokenInput').value = '';
+            document.getElementById('managerTokenInput').focus();
         }
     } catch (e) {
-        errorEl.textContent = "Invalid Authorization Code.";
+        console.error(e);
+        errorEl.textContent = "Connection Error";
         errorEl.style.display = 'block';
-        document.getElementById('managerTokenInput').value = '';
-        document.getElementById('managerTokenInput').focus();
     }
 }
 
@@ -1628,7 +1637,7 @@ async function refreshProducts() {
 
     try {
         const token = sessionStorage.getItem('authToken');
-        const response = await fetch('/api/products', {
+        const response = await fetch(window.location.origin + '/api/products/full', {
             headers: {
                 'Authorization': `Bearer ${token}`
             }

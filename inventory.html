@@ -1539,7 +1539,7 @@
         async function loadInventory() {
             try {
                 const token = sessionStorage.getItem('authToken');
-                const res = await fetch('/api/products?t=' + new Date().getTime(), {
+                const res = await fetch('/api/products/full?t=' + new Date().getTime(), {
                     headers: { 'Authorization': `Bearer ${token}` }
                 });
                 if (res.ok) {
@@ -1882,7 +1882,7 @@
             try {
                 // Determine if update or create based on existence
                 const exists = !!existingProduct;
-                const url = exists ? `/api/products/${newProduct.barcode}` : '/api/products';
+                const url = exists ? `/api/products/${newProduct.barcode}` : `/api/products`;
                 const method = exists ? 'PUT' : 'POST';
                 const token = sessionStorage.getItem('authToken');
 
