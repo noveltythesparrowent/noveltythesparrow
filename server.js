@@ -404,7 +404,7 @@ async function initDb() {
                     -- Insert Sales
                     INSERT INTO customer_ledger (customer_id, date, description, type, debit, credit, transaction_id)
                     SELECT customer_id, created_at, COALESCE(receipt_number, 'TRX') || ' (Sale)', 'SALE', total_amount, 0, id
-                    FROM transactions WHERE payment_method = 'credit' AND customer_id IS NOT NULL;
+                    FROM transactions WHERE payment_method = 'credit' AND customer_id IS NOT NULL AND status = 'completed';
                     
                     -- Insert Payments
                     INSERT INTO customer_ledger (customer_id, date, description, type, debit, credit)
@@ -1172,13 +1172,13 @@ app.get('/api/dashboard', authenticateToken, async (req, res) => {
 
         // Total Sales (Sum of transactions today)
         const salesRes = await pool.query(
-            `SELECT COALESCE(SUM(total_amount), 0) as total FROM transactions WHERE status = 'completed' AND created_at >= CURRENT_DATE ${locationFilter}`,
+            `SELECT COALESCE(SUM(total_amount), 0) as total FROM transactions WHERE LOWER(status) = 'completed' AND created_at >= CURRENT_DATE ${locationFilter}`,
             queryParams
         );
         
         // Total Transactions
         const txnsRes = await pool.query(
-            `SELECT COUNT(*) as count FROM transactions WHERE status = 'completed' AND created_at >= CURRENT_DATE ${locationFilter}`,
+            `SELECT COUNT(*) as count FROM transactions WHERE LOWER(status) = 'completed' AND created_at >= CURRENT_DATE ${locationFilter}`,
             queryParams
         );
 
@@ -1200,7 +1200,7 @@ app.get('/api/dashboard', authenticateToken, async (req, res) => {
         }
 
         // Recent Transactions
-        let recentWhere = "WHERE t.status = 'completed'";
+        let recentWhere = "WHERE LOWER(t.status) = 'completed'";
         let recentParams = [];
         
         if (storeLocation) {
@@ -1223,7 +1223,7 @@ app.get('/api/dashboard', authenticateToken, async (req, res) => {
             `SELECT u.name as cashier, COUNT(t.id) as transaction_count, SUM(t.total_amount) as total_sales
              FROM transactions t
              LEFT JOIN users u ON t.user_id = u.id
-             WHERE t.status = 'completed' AND t.created_at >= CURRENT_DATE ${cashierWhere}
+             WHERE LOWER(t.status) = 'completed' AND t.created_at >= CURRENT_DATE ${cashierWhere}
              GROUP BY u.name
              ORDER BY total_sales DESC LIMIT 5`,
              storeLocation ? [storeLocation] : []
@@ -2900,7 +2900,7 @@ app.get('/api/ceo/financials', authenticateToken, async (req, res) => {
 
     try {
         // Build Dynamic Filters
-        let txnWhere = "status = 'completed'";
+        let txnWhere = "LOWER(status) = 'completed'";
         let txnParams = [];
         let expenseWhere = "1=1";
         let expenseParams = [];
@@ -3080,7 +3080,7 @@ app.get('/api/ceo/branches', authenticateToken, async (req, res) => {
     const { startDate, endDate } = req.query;
 
     try {
-        let whereClause = "status = 'completed'";
+        let whereClause = "LOWER(status) = 'completed'";
         let params = [];
 
         if (startDate && endDate) {
@@ -3137,7 +3137,7 @@ app.get('/api/ceo/analytics/trend', authenticateToken, async (req, res) => {
         const result = await pool.query(`
             SELECT TO_CHAR(created_at, 'Dy') as day, SUM(total_amount) as revenue
             FROM transactions 
-            WHERE status = 'completed' AND created_at >= NOW() - INTERVAL '7 days'
+            WHERE LOWER(status) = 'completed' AND created_at >= NOW() - INTERVAL '7 days'
             GROUP BY day, DATE(created_at)
             ORDER BY DATE(created_at)
         `);
