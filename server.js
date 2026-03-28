@@ -1550,7 +1550,13 @@ app.get('/api/products', authenticateToken, async (req, res) => {
 app.post('/api/products', authenticateToken, async (req, res) => {
     const { barcode, name, category, price, stock, cost_price, selling_unit, packaging_unit, conversion_rate, reorder_level, track_batch, track_expiry, batch_number, expiry_date } = req.body;
     try {
-        const userBranch = req.user.store_location || 'Main Warehouse';
+        // Refresh store info from DB to ensure accuracy
+        const userRes = await pool.query('SELECT store_id, store_location FROM users WHERE id = $1', [req.user.id]);
+        const dbUser = userRes.rows[0];
+        
+        const userBranch = dbUser?.store_location || req.user.store_location || 'Main Warehouse';
+        const branchId = dbUser?.store_id || req.user.store_id || 1;
+
         const stockValue = parseInt(stock) || 0;
         const stockLevels = JSON.stringify({ [userBranch]: stockValue });
         
@@ -1561,7 +1567,6 @@ app.post('/api/products', authenticateToken, async (req, res) => {
 
         // Insert Batch if provided and stock > 0
         if (stockValue > 0 && (batch_number || expiry_date)) {
-             const branchId = req.user.store_id || 1;
              // Ensure batch number exists if expiry is provided
              const finalBatchNum = batch_number || `BATCH-${Date.now()}`;
              
@@ -1936,43 +1941,6 @@ app.delete('/api/products/:barcode', authenticateToken, async (req, res) => {
     }
 });
 
-// Update product by ID (Used for barcode generation)
-app.put('/api/products/:id', authenticateToken, async (req, res) => {
-    const { id } = req.params;
-    const { barcode, name, category, price, stock, stock_levels, cost_price, selling_unit, packaging_unit, conversion_rate, reorder_level, track_batch, track_expiry } = req.body;
-    
-    try {
-        const levels = typeof stock_levels === 'object' ? JSON.stringify(stock_levels) : stock_levels;
-        await pool.query(
-            'UPDATE products SET barcode = $1, name = $2, category = $3, price = $4, stock = $5, stock_levels = $6, cost_price = $7, selling_unit = $8, packaging_unit = $9, conversion_rate = $10, reorder_level = $11, track_batch = $12, track_expiry = $13 WHERE id = $14',
-            [barcode, name, category, price, stock, levels, cost_price, selling_unit, packaging_unit, conversion_rate, reorder_level, track_batch, track_expiry, id]
-        );
-        await logActivity(req, 'UPDATE_PRODUCT_BARCODE', { id, barcode, name });
-        res.json({ success: true });
-    } catch (err) {
-        console.error(err);
-        res.status(500).json({ message: 'Error updating product' });
-    }
-});
-
-// update product by barcode for front‑end
-app.put('/api/products/:barcode', authenticateToken, async (req, res) => {
-    const { barcode } = req.params;
-    const { name, category, price, stock, stock_levels, cost_price, selling_unit, packaging_unit, conversion_rate, reorder_level, track_batch, track_expiry } = req.body;
-    try {
-        const levels = typeof stock_levels === 'object' ? JSON.stringify(stock_levels) : stock_levels;
-        await pool.query(
-            'UPDATE products SET name = $1, category = $2, price = $3, stock = $4, stock_levels = $5, cost_price = $6, selling_unit = $7, packaging_unit = $8, conversion_rate = $9, reorder_level = $10, track_batch = $11, track_expiry = $12 WHERE barcode = $13',
-            [name, category, price, stock, levels, cost_price, selling_unit, packaging_unit, conversion_rate, reorder_level, track_batch, track_expiry, barcode]
-        );
-        await logActivity(req, 'UPDATE_PRODUCT', { barcode, name });
-        res.json({ success: true });
-    } catch (err) {
-        console.error(err);
-        res.status(500).json({ message: 'Error updating product' });
-    }
-});
-
 // Transactions Endpoint
 app.get('/transactions/all', authenticateToken, async (req, res) => {
     if (!req.user || (req.user.role !== 'admin' && req.user.role !== 'manager' && req.user.role !== 'ceo')) {
@@ -2092,6 +2060,53 @@ app.post('/api/suppliers', authenticateToken, async (req, res) => {
         await logActivity(req, 'CREATE_SUPPLIER', { name, branchId });
         res.json({ success: true });
     } catch (err) { res.status(500).json({ message: 'Error adding supplier' }); }
+});
+
+// --- PRODUCT UPDATES (Consolidated & Fixed) ---
+
+app.put('/api/products/:barcode', authenticateToken, async (req, res) => {
+    const { barcode: paramBarcode } = req.params;
+    const { name, category, price, stock, cost_price, selling_unit, packaging_unit, conversion_rate, reorder_level, track_batch, track_expiry, batch_number, expiry_date } = req.body;
+    
+    try {
+        const userRes = await pool.query('SELECT store_id, store_location FROM users WHERE id = $1', [req.user.id]);
+        const dbUser = userRes.rows[0];
+        const userBranch = dbUser?.store_location || 'Main Warehouse';
+        const branchId = dbUser?.store_id || 1;
+
+        const stockValue = parseInt(stock) || 0;
+        
+        // Get current product to manage stock_levels
+        const currentRes = await pool.query('SELECT stock_levels, track_batch, track_expiry FROM products WHERE barcode = $1', [paramBarcode]);
+        if (currentRes.rows.length === 0) return res.status(404).json({ message: 'Product not found' });
+        
+        const current = currentRes.rows[0];
+        let stockLevels = current.stock_levels || {};
+        if (typeof stockLevels === 'string') stockLevels = JSON.parse(stockLevels);
+        
+        stockLevels[userBranch] = stockValue;
+        const totalStock = Object.values(stockLevels).reduce((sum, val) => sum + (parseInt(val) || 0), 0);
+        
+        await pool.query(
+            'UPDATE products SET name = $1, category = $2, price = $3, stock = $4, stock_levels = $5, cost_price = $6, selling_unit = $7, packaging_unit = $8, conversion_rate = $9, reorder_level = $10, track_batch = $11, track_expiry = $12 WHERE barcode = $13',
+            [name, category, price, totalStock, JSON.stringify(stockLevels), cost_price, selling_unit, packaging_unit, conversion_rate, reorder_level, track_batch ?? current.track_batch, track_expiry ?? current.track_expiry, paramBarcode]
+        );
+
+        if (batch_number) {
+            await pool.query(`
+                INSERT INTO product_batches (product_barcode, batch_number, expiry_date, quantity, quantity_available, quantity_received, branch_id, status)
+                VALUES ($1, $2, $3, $4, $4, $4, $5, 'Active')
+                ON CONFLICT (product_barcode, batch_number, branch_id) 
+                DO UPDATE SET expiry_date = EXCLUDED.expiry_date, quantity_available = EXCLUDED.quantity_available
+            `, [paramBarcode, batch_number, expiry_date || null, stockValue, branchId]);
+        }
+
+        await logActivity(req, 'UPDATE_PRODUCT', { barcode: paramBarcode, name });
+        res.json({ success: true });
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ message: 'Error updating product' });
+    }
 });
 
 // --- PROCUREMENT (Purchase Orders) ---
@@ -4475,7 +4490,10 @@ app.get('/api/settings/auth-code', authenticateToken, async (req, res) => {
 
 app.post('/api/settings/auth-code', authenticateToken, async (req, res) => {
     if (req.user.role !== 'admin' && req.user.role !== 'manager') return res.status(403).json({ message: 'Unauthorized' });
-    const branchId = req.user.store_id || 1;
+    
+    // Refresh store info from DB
+    const userCheck = await pool.query('SELECT store_id FROM users WHERE id = $1', [req.user.id]);
+    const branchId = userCheck.rows[0]?.store_id || req.user.store_id || 1;
     
     // Generate 6-digit code and set 24h expiry
     const code = crypto.randomInt(100000, 1000000).toString();

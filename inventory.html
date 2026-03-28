@@ -1792,19 +1792,21 @@
             document.getElementById('pExpiryDate').value = '';
             document.getElementById('pBatchNumber').required = false;
             
-            // Try to fetch existing batch info to populate (Optional convenience)
-            const token = sessionStorage.getItem('authToken');
-            fetch(`/api/batches/next/${product.barcode}`, { headers: { 'Authorization': `Bearer ${token}` } })
-                .then(res => res.ok ? res.json() : null)
-                .then(batch => {
-                    if (batch) {
-                        document.getElementById('pBatchNumber').value = batch.batch_number || '';
-                        if (batch.expiry_date) {
-                            document.getElementById('pExpiryDate').value = batch.expiry_date.split('T')[0];
+            if (product.barcode) {
+                // Try to fetch existing batch info to populate (Optional convenience)
+                const token = sessionStorage.getItem('authToken');
+                fetch(`/api/batches/next/${product.barcode}`, { headers: { 'Authorization': `Bearer ${token}` } })
+                    .then(res => res.ok ? res.json() : null)
+                    .then(batch => {
+                        if (batch) {
+                            document.getElementById('pBatchNumber').value = batch.batch_number || '';
+                            if (batch.expiry_date) {
+                                document.getElementById('pExpiryDate').value = batch.expiry_date.split('T')[0];
+                            }
                         }
-                    }
-                })
-                .catch(e => console.log('No batch info found'));
+                    })
+                    .catch(e => console.log('No batch info found'));
+            }
 
             document.querySelector('#productModal h3').textContent = 'Edit Product';
             resetBulkMode(); // Ensure we start in single entry mode
@@ -1925,7 +1927,13 @@
                 loadInventory();
             } catch (err) {
                 console.error(err);
-                showNotification("Error saving product", "error");
+                let msg = "Error saving product";
+                try {
+                    const errData = await err.response.json();
+                    if (errData.message) msg += ": " + errData.message;
+                } catch(e) {}
+                
+                showNotification(msg, "error");
             }
         }
 
