@@ -22,4 +22,4 @@ create-*.js
 migrate-*.js
 run-*.js
 setup-*.js
-recreate-*.js
+recreate-*.js.vscode/
