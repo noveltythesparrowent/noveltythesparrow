@@ -7341,27 +7341,30 @@ app.use((req, res, next) => {
     next();
 });
 
-// Start server
-const server = app.listen(port, () => {
-    console.log(`Server running on port ${port} (HTTP)`);
-    console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
-    console.log(`Server should stay running - press Ctrl+C to stop`);
-});
+// In Vercel serverless environment, we don't call app.listen().
+// We export the app and Vercel handles the HTTP layer.
+// Locally, we start the server normally.
+if (process.env.VERCEL) {
+    // Vercel serverless — just export
+    module.exports = app;
+} else {
+    const server = app.listen(port, () => {
+        console.log(`Server running on port ${port} (HTTP)`);
+        console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
+        console.log(`Server should stay running - press Ctrl+C to stop`);
+    });
 
-// Keep the event loop alive with a heartbeat
-const heartbeat = setInterval(() => {
-    // This keeps the event loop from exiting
-    // console.log('Server heartbeat');
-}, 5000);
+    // Keep the event loop alive with a heartbeat
+    const heartbeat = setInterval(() => {}, 5000);
 
-// Handle server close
-server.on('close', () => {
-    console.log('Server closed');
-    clearInterval(heartbeat);
-});
+    server.on('close', () => {
+        console.log('Server closed');
+        clearInterval(heartbeat);
+    });
 
-server.on('error', (err) => {
-    console.error('Server error:', err);
-});
+    server.on('error', (err) => {
+        console.error('Server error:', err);
+    });
 
-module.exports = { app, pool }; // For testing
+    module.exports = { app, pool };
+}
