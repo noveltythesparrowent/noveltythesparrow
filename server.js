@@ -1724,24 +1724,6 @@ app.get('/api/dashboard', authenticateToken, async (req, res) => {
                 [req.user.tenant_id]
             );
 
-            // Fallback: scan actual stock_levels keys to auto-detect any variant not in the branches table
-            // Checks if a product key is a substring of any alias or vice versa
-            for (const product of productsRes.rows.slice(0, 30)) {
-                const levels = typeof product.stock_levels === 'string'
-                    ? JSON.parse(product.stock_levels || '{}')
-                    : (product.stock_levels || {});
-                for (const key of Object.keys(levels)) {
-                    const keyLower = key.toLowerCase();
-                    for (const alias of aliases) {
-                        if (alias && key.length > 2 &&
-                            (keyLower.includes(alias.toLowerCase()) || alias.toLowerCase().includes(keyLower))) {
-                            aliases.add(key);
-                            break;
-                        }
-                    }
-                }
-            }
-
             // Count products that are genuinely low stock for this branch
             for (const product of productsRes.rows) {
                 const levels = typeof product.stock_levels === 'string'
@@ -2352,27 +2334,6 @@ app.get('/api/products/full', authenticateToken, async (req, res) => {
         const branchKeySet = new Set(
             [userBranch, branchStockKey, branchRow?.location].filter(Boolean)
         );
-
-        // Fallback: scan actual stock_levels keys in the data to auto-detect the right key
-        // This handles cases where the branches table doesn't match or keys were saved differently
-        if (result.rows.length > 0) {
-            const sampleRows = result.rows.slice(0, Math.min(20, result.rows.length));
-            for (const p of sampleRows) {
-                const levels = typeof p.stock_levels === 'string'
-                    ? JSON.parse(p.stock_levels || '{}')
-                    : (p.stock_levels || {});
-                for (const key of Object.keys(levels)) {
-                    // Match if any alias is a substring of the key or vice versa
-                    const keyLower = key.toLowerCase();
-                    for (const alias of branchKeySet) {
-                        if (alias && (keyLower.includes(alias.toLowerCase()) || alias.toLowerCase().includes(keyLower))) {
-                            if (key.length > 2) branchKeySet.add(key); // avoid matching tiny keys
-                            break;
-                        }
-                    }
-                }
-            }
-        }
 
         const rows = result.rows.map(p => {
             const levels = p.stock_levels || {};
