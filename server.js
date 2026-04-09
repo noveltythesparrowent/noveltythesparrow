@@ -2339,16 +2339,35 @@ app.get('/api/products/full', authenticateToken, async (req, res) => {
             return p;
         });
 
+        // Apply lowStock filter AFTER branch stock is resolved per-product
+        // Only items with 0 < stock <= reorder_level qualify as "low stock"
+        const lowStockOnly = req.query.lowStock === 'true';
+        let finalRows = rows;
+        let finalTotal = totalItems;
+
+        if (lowStockOnly) {
+            finalRows = rows.filter(p => {
+                const s = (p.stock_for_branch !== undefined && p.stock_for_branch !== null)
+                    ? p.stock_for_branch
+                    : (p.stock || 0);
+                const reorder = (p.reorder_level !== null && p.reorder_level !== undefined)
+                    ? p.reorder_level
+                    : 10;
+                return s > 0 && s <= reorder;
+            });
+            finalTotal = finalRows.length;
+        }
+
         // Set header with branch key for frontend reference
         res.setHeader('X-Branch-Stock-Key', branchStockKey);
         
-        // Pass Pagination Meta Data via Headers to maintain Array backward-compatibility for POS
-        res.setHeader('X-Total-Count', totalItems);
-        res.setHeader('X-Total-Pages', totalPages);
+        // Pass Pagination Meta Data via Headers (filtered counts when lowStock=true)
+        res.setHeader('X-Total-Count', finalTotal);
+        res.setHeader('X-Total-Pages', limit ? Math.ceil(finalTotal / limit) : 1);
         res.setHeader('X-Current-Page', page);
 
         await logActivity(req, 'VIEW_INVENTORY_LIST');
-        res.json(rows);
+        res.json(finalRows);
     } catch (err) {
         console.error(err);
         res.status(500).json({ message: 'Server error' });

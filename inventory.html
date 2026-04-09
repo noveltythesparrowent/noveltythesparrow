@@ -2137,6 +2137,13 @@
 
             switchTab(tab);
 
+            // Auto-enable Low Stock filter if dashboard card was clicked with lowStock param
+            const urlParams2 = new URLSearchParams(window.location.search);
+            if (urlParams2.get('lowStock') === 'true') {
+                const cb = document.getElementById('lowStockFilter');
+                if (cb) { cb.checked = true; loadInventory(); }
+            }
+
             document.getElementById('confirmModalCancel').addEventListener('click', () => {
                 document.getElementById('confirmModal').classList.remove('active');
                 onConfirmCallback = null;
@@ -2226,13 +2233,18 @@
             try {
                 const token = localStorage.getItem('authToken');
                 const searchVal = document.getElementById('searchInput')?.value?.trim() || '';
-                const qs = `?page=${stockPage}&limit=${stockRows}&search=${encodeURIComponent(searchVal)}`;
+                const isLowStock = document.getElementById('lowStockFilter')?.checked ? '&lowStock=true' : '';
+                const qs = `?page=${stockPage}&limit=${stockRows}&search=${encodeURIComponent(searchVal)}${isLowStock}`;
                 const res = await fetch('/api/products/full' + qs, {
                     headers: { 'Authorization': `Bearer ${token}` }
                 });
                 if (res.ok) {
                     resolvedBranchKey = res.headers.get('X-Branch-Stock-Key');
                     window.serverTotalStockItems = parseInt(res.headers.get('X-Total-Count') || 0);
+                    // When lowStock filter is active, the X-Total-Count IS the low stock count
+                    if (document.getElementById('lowStockFilter')?.checked) {
+                        window.serverLowStockCount = window.serverTotalStockItems;
+                    }
                     products = await res.json();
                 } else {
                     throw new Error('Failed to load products');
@@ -2371,7 +2383,11 @@
             });
             const badge = document.getElementById('kpi-lowstock');
             if (badge) {
-                badge.textContent = `${lowItems.length} Low`;
+                // If we have a server-verified count (from lowStock API call), use it for accuracy
+                const total = (window.serverLowStockCount !== undefined)
+                    ? window.serverLowStockCount
+                    : lowItems.length;
+                badge.textContent = `${total} Low`;
             }
         }
 
