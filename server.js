@@ -1035,9 +1035,10 @@ const sessionConfig = {
     cookie: {
         secure: process.env.NODE_ENV === 'production',
         httpOnly: true,
-        sameSite: 'lax',
+        sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
         maxAge: 24 * 60 * 60 * 1000, // 24 hours
-        domain: process.env.COOKIE_DOMAIN || 'localhost'
+        // Only set domain explicitly if COOKIE_DOMAIN env var is provided
+        ...(process.env.COOKIE_DOMAIN ? { domain: process.env.COOKIE_DOMAIN } : {})
     },
     name: 'pos.sid' // Custom session cookie name
 };
@@ -1047,7 +1048,10 @@ app.use(session(sessionConfig));
 
 // CORS configuration
 const corsOptions = {
-    origin: process.env.CORS_ORIGIN || 'http://localhost:3000',
+    // In production without CORS_ORIGIN set, allow all origins (Vercel handles routing)
+    origin: process.env.CORS_ORIGIN
+        ? process.env.CORS_ORIGIN.split(',')
+        : (process.env.NODE_ENV === 'production' ? true : 'http://localhost:3000'),
     credentials: true,
     optionsSuccessStatus: 200,
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
@@ -1692,14 +1696,13 @@ app.get('/api/dashboard', authenticateToken, async (req, res) => {
              FROM transactions t WHERE LOWER(t.status) = 'completed' AND t.created_at >= CURRENT_DATE ${locationFilter}`,
             queryParams
         );
-
         // Total Transactions
         const txnsRes = await pool.query(
             `SELECT COUNT(*) as count FROM transactions t WHERE LOWER(t.status) = 'completed' AND t.is_return = FALSE AND t.created_at >= CURRENT_DATE ${locationFilter}`,
             queryParams
         );
 
-        // Low Stock
+        // Low Stock (stock > 0 AND stock <= reorder_level — excludes out-of-stock items which are a separate concern)
         let stockCount = 0;
         if (storeLocation) {
             // Aggregate branch stock keys dynamically via SQL to heal fragmented renaming
@@ -1712,16 +1715,16 @@ app.get('/api/dashboard', authenticateToken, async (req, res) => {
                 branchStockSQL += ` + (COALESCE(stock_levels->>'Lakeside', '0'))::int + (COALESCE(stock_levels->>'LAKESIDE', '0'))::int`;
             }
 
-            // All items that equate to <= reorder_level (including 0 instances) will trip the counter
+            // Count only items with stock > 0 AND <= reorder_level (genuinely LOW, not OUT OF STOCK)
             const stockRes = await pool.query(
-                `SELECT COUNT(*) as count FROM products WHERE (${branchStockSQL}) <= COALESCE(reorder_level, 10) AND tenant_id = $2`,
+                `SELECT COUNT(*) as count FROM products WHERE (${branchStockSQL}) > 0 AND (${branchStockSQL}) <= COALESCE(reorder_level, 10) AND tenant_id = $2`,
                 [storeLocation, req.user.tenant_id]
             );
             stockCount = parseInt(stockRes.rows[0].count);
         } else {
-            // Global stock check
+            // Global stock check — only genuinely low (not zero)
             const stockRes = await pool.query(
-                "SELECT COUNT(*) as count FROM products WHERE COALESCE(stock, 0) <= COALESCE(reorder_level, 10) AND tenant_id = $1",
+                "SELECT COUNT(*) as count FROM products WHERE COALESCE(stock, 0) > 0 AND COALESCE(stock, 0) <= COALESCE(reorder_level, 10) AND tenant_id = $1",
                 [req.user.tenant_id]
             );
             stockCount = parseInt(stockRes.rows[0].count);

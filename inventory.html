@@ -2362,6 +2362,19 @@
             updateLowStockKPI();
         }
 
+        function updateLowStockKPI() {
+            // Count items on current page that are genuinely low (stock > 0 AND <= reorder_level)
+            const lowItems = filteredStock.filter(p => {
+                const stock = inventoryDisplayStock(p);
+                const reorder = (p.reorder_level !== undefined && p.reorder_level !== null) ? p.reorder_level : 10;
+                return stock > 0 && stock <= reorder;
+            });
+            const badge = document.getElementById('kpi-lowstock');
+            if (badge) {
+                badge.textContent = `${lowItems.length} Low`;
+            }
+        }
+
         function toggleAllStock(source) {
             document.querySelectorAll('.stock-check').forEach(chk => {
                 chk.checked = source.checked;
