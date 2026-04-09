@@ -1778,11 +1778,13 @@ app.get('/api/dashboard', authenticateToken, async (req, res) => {
         }
         
         const cashierRes = await pool.query(
-            `SELECT u.name as cashier, COUNT(t.id) as transaction_count, SUM(t.total_amount) as total_sales
+            `SELECT CONCAT(u.name, ' (@', u.username, ' - ', u.role, ')') as cashier, 
+                    COUNT(t.id) as transaction_count, 
+                    SUM(t.total_amount) as total_sales
              FROM transactions t
              LEFT JOIN users u ON t.user_id = u.id
              WHERE LOWER(t.status) = 'completed' AND t.created_at >= CURRENT_DATE ${cashierWhere}
-             GROUP BY u.name
+             GROUP BY u.name, u.username, u.role
              ORDER BY total_sales DESC LIMIT 5`,
             storeLocation ? [storeLocation, req.user.tenant_id] : [req.user.tenant_id]
         );
