@@ -1724,7 +1724,7 @@ app.get('/api/dashboard', authenticateToken, async (req, res) => {
                 [req.user.tenant_id]
             );
 
-            // Count products that are genuinely low stock for this branch
+            // Count products that are low stock or out of stock for this branch
             for (const product of productsRes.rows) {
                 const levels = typeof product.stock_levels === 'string'
                     ? JSON.parse(product.stock_levels || '{}')
@@ -1734,17 +1734,13 @@ app.get('/api/dashboard', authenticateToken, async (req, res) => {
                     branchStock += parseInt(levels[alias]) || 0;
                 }
                 const reorder = product.reorder_level ?? 10;
-                if (branchStock > 0 && branchStock <= reorder) stockCount++;
+                if (branchStock <= reorder) stockCount++;
             }
         } else {
             // Admin/CEO global view — sum total stock across all branches per product
             const stockRes = await pool.query(
                 `SELECT COUNT(*) as count FROM products 
                  WHERE COALESCE((
-                     SELECT SUM(CAST(value AS INTEGER)) 
-                     FROM jsonb_each_text(COALESCE(stock_levels, '{}'))
-                 ), COALESCE(stock, 0)) > 0 
-                 AND COALESCE((
                      SELECT SUM(CAST(value AS INTEGER)) 
                      FROM jsonb_each_text(COALESCE(stock_levels, '{}'))
                  ), COALESCE(stock, 0)) <= COALESCE(reorder_level, 10) 
@@ -2367,7 +2363,7 @@ app.get('/api/products/full', authenticateToken, async (req, res) => {
         let finalTotal = totalItems;
 
         if (lowStockOnly) {
-            // Filter for genuinely low stock: 0 < branch_stock <= reorder_level
+            // Filter for low stock or out of stock (branch_stock <= reorder_level)
             const allLowStock = rows.filter(p => {
                 const s = (p.stock_for_branch !== undefined && p.stock_for_branch !== null)
                     ? p.stock_for_branch
@@ -2375,7 +2371,7 @@ app.get('/api/products/full', authenticateToken, async (req, res) => {
                 const reorder = (p.reorder_level !== null && p.reorder_level !== undefined)
                     ? p.reorder_level
                     : 10;
-                return s > 0 && s <= reorder;
+                return s <= reorder;
             });
             finalTotal = allLowStock.length;
             // Re-paginate the filtered results
