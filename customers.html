@@ -130,7 +130,7 @@
 
         async function logout() {
             try {
-                const token = sessionStorage.getItem('authToken');
+                const token = localStorage.getItem('authToken');
                 await fetch('/api/logout', { 
                     method: 'POST',
                     headers: { 'Authorization': `Bearer ${token}` }

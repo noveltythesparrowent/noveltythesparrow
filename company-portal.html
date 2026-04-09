@@ -855,7 +855,7 @@ tr:hover {
 
 .search-customer-row {
     display: flex;
-    flex-direction: column;
+    flex-direction: row;
     gap: 15px;
 }
 
@@ -911,7 +911,7 @@ tr:hover {
     box-shadow: 0 4px 20px rgba(0,0,0,0.08);
     border: 1px solid #f0f0f0;
     display: flex;
-    flex-direction: column;
+    flex-direction: row;
     overflow: hidden;
 }
 
@@ -1816,7 +1816,7 @@ footer {
     .kpi-card {
         width: 100% !important;
     }
-    .cart-section {
+    .cart-section, .search-customer-row {
         flex-direction: column;
     }
     .cart-labels,
@@ -2273,7 +2273,7 @@ footer {
                 </div>
             </header>
 
-            <div style="display: grid; grid-template-columns: 1fr; gap: 30px; margin-bottom: 30px;">
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(350px, 1fr)); gap: 30px; margin-bottom: 30px;">
                 <!-- Left Column: Add New Tax -->
                 <div class="content-section" style="margin-bottom: 0;">
                     <div class="section-header">
@@ -2803,7 +2803,7 @@ function changeLimit(tabType, newLimit) {
 
 // Authentication
 function checkAuth() {
-    const token = sessionStorage.getItem('companyToken');
+    const token = localStorage.getItem('companyToken');
     if (!token) {
         window.location.href = 'login';
         return;
@@ -2915,7 +2915,7 @@ function closeConfirmModal() {
 
 // Dashboard Functions
 async function loadDashboard() {
-    const token = sessionStorage.getItem('companyToken');
+    const token = localStorage.getItem('companyToken');
     try {
         const response = await fetch('/api/company/dashboard', {
             headers: { 'Authorization': `Bearer ${token}` }
@@ -2999,7 +2999,7 @@ async function openQuickCreditModal() {
 
     // Load Customers if not already loaded
     try {
-        const token = sessionStorage.getItem('companyToken');
+        const token = localStorage.getItem('companyToken');
         const res = await fetch('/api/customers', { 
             headers: { 'Authorization': `Bearer ${token}` } 
         });
@@ -3096,7 +3096,7 @@ async function processQuickCreditSale() {
 
 // Load Proforma Invoices
 async function loadProformaInvoices() {
-    const token = sessionStorage.getItem('companyToken');
+    const token = localStorage.getItem('companyToken');
     try {
         const response = await fetch('/api/company/proforma-invoices', {
             headers: { 'Authorization': `Bearer ${token}` }
@@ -3276,7 +3276,7 @@ async function handleModalDownload() {
     } else {
         closePaymentTermsModal();
         if (!currentPrintDocumentId) return;
-        const token = sessionStorage.getItem('companyToken');
+        const token = localStorage.getItem('companyToken');
         const endpoint = currentPrintDocumentType === 'PROFORMA' ? 'proforma-invoices' : 'sales-invoices';
         try {
             const res = await fetch(`/api/company/${endpoint}/${currentPrintDocumentId}`, {
@@ -3303,7 +3303,7 @@ function viewSales(id) {
 }
 
 async function sendProforma(id) {
-    const token = sessionStorage.getItem('companyToken');
+    const token = localStorage.getItem('companyToken');
     try {
         const res = await fetch(`/api/company/proforma-invoices/${id}/send`, {
             method: 'POST',
@@ -3317,7 +3317,7 @@ async function sendProforma(id) {
 }
 
 async function transferToQuickCart(id) {
-    const token = sessionStorage.getItem('companyToken');
+    const token = localStorage.getItem('companyToken');
     try {
         // Ensure inventory data is loaded to enable metadata recovery (barcodes, IDs)
         if (!products || products.length === 0) {
@@ -3377,7 +3377,7 @@ async function transferToQuickCart(id) {
 }
 
 async function loadCompanyTransactions() {
-    const token = sessionStorage.getItem('companyToken');
+    const token = localStorage.getItem('companyToken');
     try {
         const response = await fetch('/api/company/transactions', {
             headers: { 'Authorization': `Bearer ${token}` }
@@ -3396,7 +3396,7 @@ async function recordPayment(id) {
     const amount = prompt("Enter payment amount (₵):");
     if (!amount || isNaN(amount)) return;
     
-    const token = sessionStorage.getItem('companyToken');
+    const token = localStorage.getItem('companyToken');
     try {
         const res = await fetch(`/api/company/sales-invoices/${id}/payment`, {
             method: 'POST',
@@ -3415,7 +3415,7 @@ async function printDocument(data, type, terms = '..............................
     const doc = new jsPDF();
 
     // Always fetch latest settings to ensure PDF reflects recent changes
-    const token = sessionStorage.getItem('companyToken');
+    const token = localStorage.getItem('companyToken');
     try {
         const settingsRes = await fetch('/api/settings', {
             headers: { 'Authorization': `Bearer ${token}` }
@@ -3490,7 +3490,7 @@ async function printDocument(data, type, terms = '..............................
     const tableRows = items.map((item, index) => [
         index + 1,
         item.product_name,
-        item.quantity,
+        parseFloat(item.quantity),
         item.conversion_rate || item.items_per_package || '-',
         parseFloat(item.unit_price).toFixed(2),
         parseFloat(item.line_total).toFixed(2)
@@ -3616,9 +3616,9 @@ let scannerActive = false;
 
 // Load products for quick sale
 async function loadQuickSaleProducts() {
-    const token = sessionStorage.getItem('companyToken');
+    const token = localStorage.getItem('companyToken');
     try {
-        const response = await fetch('/api/products/full?t=' + new Date().getTime(), {
+        const response = await fetch('/api/products/full?limit=all&t=' + new Date().getTime(), {
             headers: { 'Authorization': `Bearer ${token}` }
         });
         
@@ -3705,10 +3705,11 @@ function showSuggestions(query) {
         return;
     }
     
-    suggestionsDropdown.innerHTML = matches.map(product => `
-        <div class="suggestion-item" onclick="selectSuggestion(${JSON.stringify(product).replace(/"/g, '&quot;')})">
+    suggestionActiveIndex = -1;
+    suggestionsDropdown.innerHTML = matches.map((product, i) => `
+        <div class="suggestion-item" data-index="${i}" data-id="${product.id}" onclick="selectSuggestionById(this.dataset.id)">
             <div>
-                <div><strong>${product.name}</strong></div>
+                <div><strong>${product.name.replace(/</g, '&lt;')}</strong></div>
                 <div class="product-details">Barcode: ${product.barcode || 'N/A'} | Stock: ${product.stock || 0}</div>
             </div>
             <div class="product-price">₵${parseFloat(product.price).toFixed(2)}</div>
@@ -3724,6 +3725,11 @@ function closeSuggestions() {
     suggestionsDropdown.style.display = 'none';
 }
 
+function selectSuggestionById(id) {
+    const product = products.find(p => p.id == id);
+    if (product) selectSuggestion(product);
+}
+
 // Select suggestion
 function selectSuggestion(product) {
     addToQuickCart(product);
@@ -3735,6 +3741,16 @@ function selectSuggestion(product) {
     setTimeout(() => {
         scanResult.innerHTML = '';
     }, 2000);
+}
+
+let suggestionActiveIndex = -1;
+
+function updateActiveSuggestion(items) {
+    items.forEach(item => item.classList.remove('active'));
+    if (suggestionActiveIndex >= 0 && items.length > 0) {
+        items[suggestionActiveIndex].classList.add('active');
+        items[suggestionActiveIndex].scrollIntoView({ block: 'nearest' });
+    }
 }
 
 // Handle input events for suggestions
@@ -3749,9 +3765,27 @@ document.addEventListener('DOMContentLoaded', function() {
         
         // Key events
         barcodeInput.addEventListener('keydown', function(e) {
-            if (e.key === 'Enter') {
+            const box = document.getElementById('searchSuggestions');
+            const items = box.querySelectorAll('.suggestion-item');
+            const listOpen = box.style.display !== 'none' && items.length > 0;
+
+            if (e.key === 'ArrowDown') {
+                if (!listOpen) return;
                 e.preventDefault();
-                manualScan();
+                suggestionActiveIndex = Math.min(suggestionActiveIndex + 1, items.length - 1);
+                updateActiveSuggestion(items);
+            } else if (e.key === 'ArrowUp') {
+                if (!listOpen) return;
+                e.preventDefault();
+                suggestionActiveIndex = Math.max(suggestionActiveIndex - 1, -1);
+                updateActiveSuggestion(items);
+            } else if (e.key === 'Enter') {
+                e.preventDefault();
+                if (listOpen && suggestionActiveIndex >= 0) {
+                    items[suggestionActiveIndex].click();
+                } else {
+                    manualScan();
+                }
             } else if (e.key === 'Escape') {
                 closeSuggestions();
             }
@@ -3945,7 +3979,7 @@ async function processQuickPayment(paymentMethod, shouldDownload = false, custom
         proforma_id: activeProformaId
     };
     
-    const token = sessionStorage.getItem('companyToken');
+    const token = localStorage.getItem('companyToken');
     try {
         const response = await fetch('/api/company/quick-sale', {
             method: 'POST',
@@ -4101,7 +4135,7 @@ async function processQuickDocument(docType, paymentMethod, shouldDownload = fal
         skip_stock: true 
     };
     
-    const token = sessionStorage.getItem('companyToken');
+    const token = localStorage.getItem('companyToken');
     try {
         const response = await fetch('/api/company/quick-sale', {
             method: 'POST',
@@ -4245,13 +4279,13 @@ async function logout() {
         
         if (response.ok) {
             // Clear session and redirect to login
-            sessionStorage.clear();
+            localStorage.clear();
             window.location.href = 'login';
         }
     } catch (error) {
         console.error('Logout error:', error);
         // Even if error, redirect to login
-        sessionStorage.clear();
+        localStorage.clear();
         window.location.href = 'login';
     }
 }
@@ -4259,7 +4293,7 @@ async function logout() {
 // Tax Management Functions
 async function loadTaxes() {
     const modalList = document.getElementById('taxList');
-    const token = sessionStorage.getItem('companyToken');
+    const token = localStorage.getItem('companyToken');
     try {
         const response = await fetch('/api/company/taxes', {
             headers: { 'Authorization': `Bearer ${token}` }
@@ -4314,7 +4348,7 @@ async function handleAddTax(event) {
     event.preventDefault();
     const name = document.getElementById('newTaxName').value.trim();
     const rate = parseFloat(document.getElementById('newTaxRate').value);
-    const token = sessionStorage.getItem('companyToken');
+    const token = localStorage.getItem('companyToken');
 
     if (!name || isNaN(rate) || rate < 0 || rate > 100) {
         showToast('Please enter valid tax name and rate.', 'warning');
@@ -4352,7 +4386,7 @@ async function handleAddTax(event) {
 }
 
 async function toggleTaxStatus(taxId, currentStatus) {
-    const token = sessionStorage.getItem('companyToken');
+    const token = localStorage.getItem('companyToken');
     try {
         const response = await fetch(`/api/company/taxes/${taxId}/toggle`, {
             method: 'PUT',
@@ -4374,7 +4408,7 @@ async function toggleTaxStatus(taxId, currentStatus) {
 
 function deleteTax(taxId) {
     showConfirm('Delete Tax Rule', 'Are you sure you want to delete this tax rule?', async () => {
-        const token = sessionStorage.getItem('companyToken');
+        const token = localStorage.getItem('companyToken');
         try {
             const response = await fetch(`/api/company/taxes/${taxId}`, {
                 method: 'DELETE',
@@ -4400,7 +4434,7 @@ async function generateCompanyTaxReport() {
     const start = document.getElementById('reportStart').value;
     const end = document.getElementById('reportEnd').value;
     const tbody = document.getElementById('taxReportTableBody');
-    const token = sessionStorage.getItem('companyToken');
+    const token = localStorage.getItem('companyToken');
     
     tbody.innerHTML = '<tr><td colspan="4" style="text-align:center; padding:30px;">Generating...</td></tr>';
 
@@ -4423,7 +4457,7 @@ async function generateCompanyTaxReport() {
 }
 
 async function loadCompanySettings() {
-    const token = sessionStorage.getItem('companyToken');
+    const token = localStorage.getItem('companyToken');
     try {
         const response = await fetch('/api/settings', {
             headers: { 'Authorization': `Bearer ${token}` }
@@ -4450,7 +4484,7 @@ async function loadCompanySettings() {
 
 async function handleSaveCompanySettings(e) {
     e.preventDefault();
-    const token = sessionStorage.getItem('companyToken');
+    const token = localStorage.getItem('companyToken');
     const settings = {
         storeName: document.getElementById('settingCompanyName').value,
         taxId: document.getElementById('settingTaxId').value,
@@ -4543,7 +4577,7 @@ async function downloadTransaction(trx) {
         return;
     }
     
-    const token = sessionStorage.getItem('companyToken');
+    const token = localStorage.getItem('companyToken');
     try {
         const res = await fetch(`/api/company/sales-invoices/${trx.invoice_id}`, {
             headers: { 'Authorization': `Bearer ${token}` }

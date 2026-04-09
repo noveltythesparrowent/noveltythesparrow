@@ -238,7 +238,7 @@
         };
 
         async function loadBranches() {
-            const token = sessionStorage.getItem('authToken');
+            const token = localStorage.getItem('authToken');
             try {
                 const res = await fetch('/api/branches', { headers: { 'Authorization': `Bearer ${token}` }});
                 if(res.ok) {
@@ -257,7 +257,7 @@
         async function loadTaxes() {
             const list = document.getElementById('taxList');
             try {
-                const token = sessionStorage.getItem('authToken');
+                const token = localStorage.getItem('authToken');
                 
                 // Fetch both taxes and settings (for System VAT)
                 const [taxesRes, settingsRes] = await Promise.all([
@@ -318,7 +318,7 @@
             e.preventDefault();
             const name = document.getElementById('newTaxName').value;
             const rate = document.getElementById('newTaxRate').value;
-            const token = sessionStorage.getItem('authToken');
+            const token = localStorage.getItem('authToken');
 
             try {
                 const res = await fetch('/api/taxes', {
@@ -340,7 +340,7 @@
                 'Remove System VAT?',
                 'Are you sure you want to remove the global System VAT rule? This will set the rate to 0.00%.',
                 async () => {
-                    const token = sessionStorage.getItem('authToken');
+                    const token = localStorage.getItem('authToken');
                     try {
                         const res = await fetch('/api/settings/vat', { method: 'DELETE', headers: { 'Authorization': `Bearer ${token}` } });
                         if (res.ok) { 
@@ -358,7 +358,7 @@
                 'Remove Tax Rule?',
                 'Are you sure you want to remove this tax rule permanently?',
                 async () => {
-                    const token = sessionStorage.getItem('authToken');
+                    const token = localStorage.getItem('authToken');
                     try {
                         const res = await fetch(`/api/taxes/${id}`, { method: 'DELETE', headers: { 'Authorization': `Bearer ${token}` } });
                         if (res.ok) { 
@@ -375,7 +375,7 @@
             const start = document.getElementById('reportStart').value;
             const end = document.getElementById('reportEnd').value;
             const branch = document.getElementById('reportBranch').value;
-            const token = sessionStorage.getItem('authToken');
+            const token = localStorage.getItem('authToken');
             
             const tbody = document.getElementById('reportTableBody');
             const theadRow = document.querySelector('#reportTable thead tr');
@@ -473,7 +473,7 @@
         }
 
         async function logout() {
-            const token = sessionStorage.getItem('authToken');
+            const token = localStorage.getItem('authToken');
             await fetch('/api/logout', { method: 'POST', headers: { 'Authorization': `Bearer ${token}` }});
             window.location.href = '/login';
         }

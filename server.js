@@ -34,7 +34,10 @@ const crypto = require('crypto');
 const security = require('./security');
 const multer = require('multer');
 const xlsx = require('xlsx');
+const { AsyncLocalStorage } = require('async_hooks');
 
+// SaaS RLS Wrapper Context Tracking
+const tenantContext = new AsyncLocalStorage();
 const faviconPath = path.join(__dirname, 'logo.png');
 
 const app = express();
@@ -106,6 +109,46 @@ try {
     throw err;
 }
 
+// SaaS RLS Wrapper: Automatically inject `tenant_id` sandbox into all DB queries executed by Node.
+const originalPoolConnect = pool.connect.bind(pool);
+pool.connect = async function() {
+    const client = await originalPoolConnect();
+    
+    // Safely wrap the client just once per lifecycle
+    if (!client.__saas_patched) {
+        const originalClientQuery = client.query.bind(client);
+        client.query = async function(...args) {
+            const tenantId = tenantContext.getStore();
+            const configSet = tenantId !== undefined && tenantId !== null && tenantId !== '';
+            
+            if (configSet) {
+                await originalClientQuery(`SELECT set_config('app.current_tenant', $1, false)`, [tenantId.toString()]);
+            }
+            
+            try {
+                return await originalClientQuery(...args);
+            } finally {
+                if (configSet) {
+                    await originalClientQuery(`SELECT set_config('app.current_tenant', '', false)`);
+                }
+            }
+        };
+        client.__saas_patched = true;
+    }
+    return client;
+};
+
+// Also patch the direct pool.query fallback which behaves independently in older `pg` versions
+const originalPoolQuery = pool.query.bind(pool);
+pool.query = async function(...args) {
+    const client = await pool.connect();
+    try {
+        return await client.query(...args);
+    } finally {
+        client.release();
+    }
+};
+
 // Audit Logging Helper
 async function logActivity(req, action, details = {}) {
     try {
@@ -124,6 +167,15 @@ async function logActivity(req, action, details = {}) {
 async function initDb() {
     try {
         await pool.query(`
+            -- SaaS Multitenancy Table
+            CREATE TABLE IF NOT EXISTS tenants (
+                id SERIAL PRIMARY KEY,
+                name VARCHAR(255) NOT NULL,
+                subscription_status VARCHAR(50) DEFAULT 'Active',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+            INSERT INTO tenants (id, name) VALUES (1, 'Default System Business') ON CONFLICT (id) DO NOTHING;
+            
             -- Company Portal Core Tables
             CREATE TABLE IF NOT EXISTS companies (
                 id SERIAL PRIMARY KEY,
@@ -134,7 +186,27 @@ async function initDb() {
                 address TEXT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
+        `);
 
+        // Force explicit separate creation for company_users to prevent transaction pooling drops
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS company_users (
+                id SERIAL PRIMARY KEY,
+                company_id INTEGER REFERENCES companies(id),
+                company_name VARCHAR(255),
+                contact_person VARCHAR(100),
+                email VARCHAR(255) UNIQUE NOT NULL,
+                password VARCHAR(255) NOT NULL,
+                phone VARCHAR(50),
+                address TEXT,
+                status VARCHAR(20) DEFAULT 'Active',
+                role VARCHAR(50) DEFAULT 'business_client',
+                tenant_id INT REFERENCES tenants(id) DEFAULT 1,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+        `);
+
+        await pool.query(`
             CREATE TABLE IF NOT EXISTS proforma_invoices (
                 id SERIAL PRIMARY KEY,
                 company_id INTEGER REFERENCES companies(id),
@@ -262,10 +334,11 @@ async function initDb() {
             );
             
             -- Seed default branches if empty
-            INSERT INTO branches (id, name, location) VALUES (1, 'Main Warehouse', 'Headquarters') ON CONFLICT (id) DO NOTHING;
-            INSERT INTO branches (id, name, location) VALUES (2, 'Accra Branch', 'Accra Central') ON CONFLICT (id) DO NOTHING;
-            INSERT INTO branches (id, name, location) VALUES (3, 'Kumasi Branch', 'Kumasi') ON CONFLICT (id) DO NOTHING;
-
+            INSERT INTO branches (id, name, location) VALUES (1, 'Novelty The Sparrow Ent', 'Dzorwulu') ON CONFLICT (id) DO NOTHING;
+            
+            -- Force update legacy initializations
+            UPDATE branches SET name = 'Novelty The Sparrow Ent', location = 'Dzorwulu' WHERE id = 1 AND name = 'Main Warehouse';
+            -- No additional dummy branches will be forced into the database.
             -- FIX: Sync branches_id_seq with the actual max id to prevent duplicate key errors
             SELECT setval(pg_get_serial_sequence('branches', 'id'), COALESCE((SELECT MAX(id) FROM branches), 1));
 
@@ -307,13 +380,14 @@ async function initDb() {
                 IF dup_count = 0 THEN
                     -- Drop the old barcode primary key constraint with CASCADE to remove dependencies
                     ALTER TABLE products DROP CONSTRAINT IF EXISTS products_pkey CASCADE;
+                    ALTER TABLE products DROP CONSTRAINT IF EXISTS products_barcode_name_key CASCADE;
                     
-                    -- Add new unique constraint on barcode+name if it doesn't exist
+                    -- Add new unique constraint on tenant_id+barcode+name if it doesn't exist
                     IF NOT EXISTS (
                         SELECT 1 FROM pg_constraint 
-                        WHERE conname = 'products_barcode_name_key'
+                        WHERE conname = 'products_tenant_barcode_name_key'
                     ) THEN
-                        ALTER TABLE products ADD CONSTRAINT products_barcode_name_key UNIQUE (barcode, name);
+                        ALTER TABLE products ADD CONSTRAINT products_tenant_barcode_name_key UNIQUE (tenant_id, barcode, name);
                     END IF;
                 ELSE
                     -- Skip constraint creation if duplicates exist - keep existing structure
@@ -763,11 +837,25 @@ async function initDb() {
                 received_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
 
+            -- Create Stock Transfers Table
+            CREATE TABLE IF NOT EXISTS stock_transfers (
+                id SERIAL PRIMARY KEY,
+                transfer_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                from_branch_id INTEGER,
+                to_branch_id INTEGER,
+                status VARCHAR(50) DEFAULT 'Pending',
+                created_by INTEGER,
+                tenant_id INT REFERENCES tenants(id) DEFAULT 1
+            );
+            
             -- Ensure stock_transfers has all columns
             ALTER TABLE stock_transfers ADD COLUMN IF NOT EXISTS branch_id INT;
             ALTER TABLE stock_transfers ADD COLUMN IF NOT EXISTS confirmed_by INT;
             ALTER TABLE stock_transfers ADD COLUMN IF NOT EXISTS confirmed_at TIMESTAMP;
             ALTER TABLE stock_transfers ADD COLUMN IF NOT EXISTS notes TEXT;
+            ALTER TABLE stock_transfers ADD COLUMN IF NOT EXISTS from_location VARCHAR(255);
+            ALTER TABLE stock_transfers ADD COLUMN IF NOT EXISTS to_location VARCHAR(255);
+            ALTER TABLE stock_transfers ADD COLUMN IF NOT EXISTS items JSONB;
 
             CREATE TABLE IF NOT EXISTS stock_transfer_items (
                 id SERIAL PRIMARY KEY,
@@ -830,6 +918,34 @@ async function initDb() {
             -- This prevents them from leaking into other portals/branches
             UPDATE tax_rules SET branch_id = 1 WHERE branch_id IS NULL;
         `);
+        // MULTI-TENANT ISOLATION MIGRATIONS
+        await pool.query(`
+            ALTER TABLE users ADD COLUMN IF NOT EXISTS tenant_id INT REFERENCES tenants(id) DEFAULT 1;
+            ALTER TABLE branches ADD COLUMN IF NOT EXISTS tenant_id INT REFERENCES tenants(id) DEFAULT 1;
+            ALTER TABLE products ADD COLUMN IF NOT EXISTS tenant_id INT REFERENCES tenants(id) DEFAULT 1;
+            ALTER TABLE categories ADD COLUMN IF NOT EXISTS tenant_id INT REFERENCES tenants(id) DEFAULT 1;
+            ALTER TABLE suppliers ADD COLUMN IF NOT EXISTS tenant_id INT REFERENCES tenants(id) DEFAULT 1;
+            ALTER TABLE transactions ADD COLUMN IF NOT EXISTS tenant_id INT REFERENCES tenants(id) DEFAULT 1;
+            ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS tenant_id INT REFERENCES tenants(id) DEFAULT 1;
+            ALTER TABLE expenses ADD COLUMN IF NOT EXISTS tenant_id INT REFERENCES tenants(id) DEFAULT 1;
+            ALTER TABLE shifts ADD COLUMN IF NOT EXISTS tenant_id INT REFERENCES tenants(id) DEFAULT 1;
+            ALTER TABLE refunds ADD COLUMN IF NOT EXISTS tenant_id INT REFERENCES tenants(id) DEFAULT 1;
+            ALTER TABLE customers ADD COLUMN IF NOT EXISTS tenant_id INT REFERENCES tenants(id) DEFAULT 1;
+            ALTER TABLE promotions ADD COLUMN IF NOT EXISTS tenant_id INT REFERENCES tenants(id) DEFAULT 1;
+
+            UPDATE users SET tenant_id = 1 WHERE tenant_id IS NULL;
+            UPDATE branches SET tenant_id = 1 WHERE tenant_id IS NULL;
+            UPDATE products SET tenant_id = 1 WHERE tenant_id IS NULL;
+            UPDATE categories SET tenant_id = 1 WHERE tenant_id IS NULL;
+            UPDATE suppliers SET tenant_id = 1 WHERE tenant_id IS NULL;
+            UPDATE transactions SET tenant_id = 1 WHERE tenant_id IS NULL;
+            UPDATE purchase_orders SET tenant_id = 1 WHERE tenant_id IS NULL;
+            UPDATE expenses SET tenant_id = 1 WHERE tenant_id IS NULL;
+            UPDATE shifts SET tenant_id = 1 WHERE tenant_id IS NULL;
+            UPDATE refunds SET tenant_id = 1 WHERE tenant_id IS NULL;
+            UPDATE customers SET tenant_id = 1 WHERE tenant_id IS NULL;
+            UPDATE promotions SET tenant_id = 1 WHERE tenant_id IS NULL;
+        `);
 
         // Create Default CEO User if not exists
         try {
@@ -848,6 +964,49 @@ async function initDb() {
             }
         } catch (ceoErr) {
             console.error('CEO creation error:', ceoErr);
+        }
+
+        // SaaS MULTI-TENANT ARCHITECTURE LOOP
+        // Natively inject tenant_id global sandboxes across all 28 operational tables
+        const saasTables = [
+            'proforma_invoices', 'proforma_invoice_items', 'company_transactions',
+            'sales_invoices', 'sales_invoice_items', 'product_batches', 'transactions',
+            'refunds', 'customers', 'shifts', 'customer_payments', 'expenses',
+            'activity_logs', 'system_settings', 'customer_ledger', 'shelf_inventory',
+            'shelf_movements', 'stock_adjustments', 'stock_takes', 'stock_take_items',
+            'reorder_alerts', 'inventory_audit_log', 'goods_received', 'stock_transfers',
+            'stock_transfer_items', 'price_lists', 'price_list_items', 'tax_rules'
+        ];
+        
+        for (const table of saasTables) {
+            try {
+                // Ensure table structure exists and forcefully map sandbox parameter
+                await pool.query(`ALTER TABLE ${table} ADD COLUMN IF NOT EXISTS tenant_id INT REFERENCES tenants(id) DEFAULT 1;`);
+                await pool.query(`UPDATE ${table} SET tenant_id = 1 WHERE tenant_id IS NULL;`);
+                
+                // RLS: Natively lock the database table to the current Express Session context mathematically
+                await pool.query(`ALTER TABLE ${table} ENABLE ROW LEVEL SECURITY;`);
+                await pool.query(`DROP POLICY IF EXISTS tenant_isolation_policy ON ${table};`);
+                await pool.query(`
+                    CREATE POLICY tenant_isolation_policy ON ${table}
+                    FOR ALL
+                    USING (
+                        NULLIF(current_setting('app.current_tenant', true), '') IS NULL 
+                        OR tenant_id = NULLIF(current_setting('app.current_tenant', true), '')::int
+                    );
+                `);
+                
+                // Magic Mechanism: Missing API INSERT structures automatically inherit the Sandbox Default!
+                await pool.query(`
+                    ALTER TABLE ${table} ALTER COLUMN tenant_id 
+                    SET DEFAULT COALESCE(NULLIF(current_setting('app.current_tenant', true), '')::int, 1);
+                `);
+            } catch (err) {
+                // If the table doesn't exist yet, we can gracefully skip
+                if (err.code !== '42P01') { 
+                    console.error(`Error enforcing tenant_id on sandbox table ${table}:`, err.message);
+                }
+            }
         }
 
         console.log('Database schema checked/updated');
@@ -907,26 +1066,33 @@ const authenticateToken = (req, res, next) => {
     const authHeader = req.headers['authorization'];
     let token = authHeader && authHeader.split(' ')[1]; // Bearer <token>
 
-    // Fix: Handle string "null" or "undefined" sent by client when storage is empty
     if (token === 'null' || token === 'undefined') token = null;
+    
+    // Helper to evaluate SaaS tenant boundaries securely before passing to API logic
+    const enforceSaaSBoundary = (userPayload) => {
+        if (!userPayload) return res.status(401).json({ message: 'Not authenticated' });
+        
+        if (userPayload.role) userPayload.role = userPayload.role.toLowerCase();
+        req.user = userPayload;
+
+        // CEOs and System Admins bypass the sandbox (Empty String Sandbox Bypass Native SQL mapped)
+        const activeTenantSandbox = (userPayload.role === 'ceo' || userPayload.role === 'admin') 
+            ? '' 
+            : (userPayload.tenant_id ? userPayload.tenant_id.toString() : '1');
+            
+        // Engulf the remaining endpoint execution inside the Postgres RLS interceptor
+        tenantContext.run(activeTenantSandbox, () => next());
+    };
 
     if (token) {
         jwt.verify(token, JWT_SECRET, (err, user) => {
             if (err) return res.status(403).json({ message: 'Invalid or expired token' });
-            // Normalize role to lowercase to avoid case-sensitivity issues in permission checks
-            if (user && user.role) user.role = user.role.toLowerCase();
-            req.user = user;
-            next();
+            enforceSaaSBoundary(user);
         });
     } else if (req.session && req.session.user) {
-        // Normalize session role as well
-        if (req.session.user.role) req.session.user.role = req.session.user.role.toLowerCase();
-        req.user = req.session.user; // Fallback to session cookie (regular users)
-        next();
+        enforceSaaSBoundary(req.session.user);
     } else if (req.session && req.session.companyUser) {
-        if (req.session.companyUser.role) req.session.companyUser.role = req.session.companyUser.role.toLowerCase();
-        req.user = req.session.companyUser; // Company users
-        next();
+        enforceSaaSBoundary(req.session.companyUser);
     } else {
         res.status(401).json({ message: 'Not authenticated' });
     }
@@ -1116,9 +1282,9 @@ app.post('/login', [
     const { email, password } = req.body;
 
     try {
-        // Find user by email with branch/store information (Case Insensitive)
+        // Find user by email with branch/store and tenant information (Case Insensitive)
         const userResult = await pool.query(
-            'SELECT id, name, email, password, role, store_id, store_location, status FROM users WHERE LOWER(email) = LOWER($1)',
+            'SELECT id, name, email, password, role, store_id, store_location, status, tenant_id FROM users WHERE LOWER(email) = LOWER($1)',
             [email]
         );
 
@@ -1157,6 +1323,7 @@ app.post('/login', [
             email: user.email,
             name: user.name,
             role: normalizedRole,
+            tenant_id: user.tenant_id || 1,
             store_id: user.store_id || (normalizedRole === 'admin' || normalizedRole === 'ceo' ? 1 : null), // Ensure High-level users have a default store context
             store_location: user.store_location || (normalizedRole === 'admin' || normalizedRole === 'ceo' ? 'Headquarters' : null) // Ensure High-level users have a default view context
         };
@@ -1165,7 +1332,7 @@ app.post('/login', [
         await logActivity(req, 'LOGIN', { email: user.email, role: user.role });
 
         // Generate JWT Token
-        const token = jwt.sign(req.session.user, JWT_SECRET, { expiresIn: '24h' });
+        const token = jwt.sign(req.session.user, JWT_SECRET, { expiresIn: '7d' });
 
         // Set redirect path based on role
         const userRole = user.role.toLowerCase();
@@ -1275,7 +1442,7 @@ app.post('/api/company/login', [
         };
 
         // Generate JWT Token
-        const token = jwt.sign(req.session.companyUser, JWT_SECRET, { expiresIn: '24h' });
+        const token = jwt.sign(req.session.companyUser, JWT_SECRET, { expiresIn: '7d' });
 
         res.json({
             success: true,
@@ -1509,12 +1676,11 @@ app.get('/api/dashboard', authenticateToken, async (req, res) => {
         const storeLocation = dbUser?.store_location || user.store_location;
 
         // Filter parameters
-        let locationFilter = "";
-        let queryParams = [];
+        let locationFilter = "AND t.tenant_id = $" + (storeLocation ? "2" : "1");
+        let queryParams = storeLocation ? [storeLocation, req.user.tenant_id] : [req.user.tenant_id];
 
         if (storeLocation) {
-            locationFilter = "AND store_location = $1";
-            queryParams.push(storeLocation);
+            locationFilter = "AND t.store_location = $1 AND t.tenant_id = $2";
         }
 
         // Total Sales (Sum of transactions today)
@@ -1529,34 +1695,44 @@ app.get('/api/dashboard', authenticateToken, async (req, res) => {
 
         // Total Transactions
         const txnsRes = await pool.query(
-            `SELECT COUNT(*) as count FROM transactions WHERE LOWER(status) = 'completed' AND is_return = FALSE AND created_at >= CURRENT_DATE ${locationFilter}`,
+            `SELECT COUNT(*) as count FROM transactions t WHERE LOWER(t.status) = 'completed' AND t.is_return = FALSE AND t.created_at >= CURRENT_DATE ${locationFilter}`,
             queryParams
         );
 
         // Low Stock
         let stockCount = 0;
         if (storeLocation) {
-            // Check specific branch stock in JSONB
+            // Aggregate branch stock keys dynamically via SQL to heal fragmented renaming
+            let branchStockSQL = `(COALESCE(stock_levels->>$1, '0'))::int`;
+            
+            if (storeLocation.toLowerCase().includes('dzorwulu')) {
+                branchStockSQL += ` + (COALESCE(stock_levels->>'Dzorwulu', '0'))::int + (COALESCE(stock_levels->>'DZORWULU', '0'))::int`;
+            }
+            if (storeLocation.toLowerCase().includes('lakeside')) {
+                branchStockSQL += ` + (COALESCE(stock_levels->>'Lakeside', '0'))::int + (COALESCE(stock_levels->>'LAKESIDE', '0'))::int`;
+            }
+
+            // All items that equate to <= reorder_level (including 0 instances) will trip the counter
             const stockRes = await pool.query(
-                `SELECT COUNT(*) as count FROM products WHERE (COALESCE(stock_levels->>$1, '0'))::int <= COALESCE(reorder_level, 10)`,
-                [storeLocation]
+                `SELECT COUNT(*) as count FROM products WHERE (${branchStockSQL}) <= COALESCE(reorder_level, 10) AND tenant_id = $2`,
+                [storeLocation, req.user.tenant_id]
             );
             stockCount = parseInt(stockRes.rows[0].count);
         } else {
             // Global stock check
             const stockRes = await pool.query(
-                "SELECT COUNT(*) as count FROM products WHERE COALESCE(stock, 0) <= COALESCE(reorder_level, 10)"
+                "SELECT COUNT(*) as count FROM products WHERE COALESCE(stock, 0) <= COALESCE(reorder_level, 10) AND tenant_id = $1",
+                [req.user.tenant_id]
             );
             stockCount = parseInt(stockRes.rows[0].count);
         }
 
         // Recent Transactions
-        let recentWhere = "WHERE LOWER(t.status) = 'completed' AND t.is_return = FALSE";
-        let recentParams = [];
+        let recentWhere = "WHERE LOWER(t.status) = 'completed' AND t.is_return = FALSE AND t.tenant_id = $" + (storeLocation ? "2" : "1");
+        let recentParams = storeLocation ? [storeLocation, req.user.tenant_id] : [req.user.tenant_id];
 
         if (storeLocation) {
             recentWhere += " AND t.store_location = $1";
-            recentParams.push(storeLocation);
         }
 
         const recentRes = await pool.query(
@@ -1573,7 +1749,11 @@ app.get('/api/dashboard', authenticateToken, async (req, res) => {
         );
 
         // Cashier Performance Stats
-        let cashierWhere = storeLocation ? "AND t.store_location = $1" : "";
+        let cashierWhere = "AND t.tenant_id = $" + (storeLocation ? "2" : "1");
+        if (storeLocation) {
+            cashierWhere += " AND t.store_location = $1";
+        }
+        
         const cashierRes = await pool.query(
             `SELECT u.name as cashier, COUNT(t.id) as transaction_count, SUM(t.total_amount) as total_sales
              FROM transactions t
@@ -1581,7 +1761,7 @@ app.get('/api/dashboard', authenticateToken, async (req, res) => {
              WHERE LOWER(t.status) = 'completed' AND t.created_at >= CURRENT_DATE ${cashierWhere}
              GROUP BY u.name
              ORDER BY total_sales DESC LIMIT 5`,
-            storeLocation ? [storeLocation] : []
+            storeLocation ? [storeLocation, req.user.tenant_id] : [req.user.tenant_id]
         );
 
         res.json({
@@ -1746,16 +1926,18 @@ app.get('/api/promotions', authenticateToken, async (req, res) => {
                 FROM promotions p
                 LEFT JOIN branches b ON p.branch_id = b.id
                 LEFT JOIN promotion_usage pu ON p.code = pu.promotion_code AND pu.branch_id = $1
-                WHERE p.branch_id = $1 OR p.branch_id IS NULL
+                WHERE p.tenant_id = $2 AND p.branch_id = $1
                 ORDER BY p.created_at DESC`;
-            params.push(req.user.store_id);
+            params.push(req.user.store_id, req.user.tenant_id);
         } else {
             // For Admin/CEO, show global total_discounted
             query = `
                 SELECT p.*, COALESCE(b.name, 'Global') as branch_name 
                 FROM promotions p
                 LEFT JOIN branches b ON p.branch_id = b.id
+                WHERE p.tenant_id = $1
                 ORDER BY p.created_at DESC`;
+            params.push(req.user.tenant_id);
         }
 
         const result = await pool.query(query, params);
@@ -1773,10 +1955,10 @@ app.post('/api/promotions', authenticateToken, async (req, res) => {
 
     try {
         await pool.query(
-            'INSERT INTO promotions (code, discount_percentage, branch_id) VALUES ($1, $2, $3)',
-            [code, discount, branchId]
+            'INSERT INTO promotions (code, discount_percentage, branch_id, tenant_id) VALUES ($1, $2, $3, $4)',
+            [code, discount, branchId, req.user.tenant_id]
         );
-        await logActivity(req, 'CREATE_PROMOTION', { code, discount, branchId });
+        await logActivity(req, 'CREATE_PROMOTION', { code, discount, branchId, tenantId: req.user.tenant_id });
         res.json({ success: true });
     } catch (err) {
         console.error(err);
@@ -1787,14 +1969,12 @@ app.post('/api/promotions', authenticateToken, async (req, res) => {
 app.delete('/api/promotions/:code', authenticateToken, async (req, res) => {
     if (!req.user) return res.status(401).json({ message: 'Not authenticated' });
     try {
-        let query = 'DELETE FROM promotions WHERE code = $1';
-        let params = [req.params.code];
+        let query = 'DELETE FROM promotions WHERE code = $1 AND tenant_id = $2';
+        let params = [req.params.code, req.user.tenant_id];
 
-        // Ensure users can only delete promotions from their own branch (unless CEO/Admin)
         // Ensure users can only delete promotions from their own branch (Strict Ownership)
         if (req.user.role !== 'admin' && req.user.role !== 'ceo' && req.user.store_id) {
-            query += ' AND (branch_id = $2 OR branch_id IS NULL)';
-            query += ' AND branch_id = $2'; // Managers cannot delete Global promotions
+            query += ' AND branch_id = $3'; // Managers cannot delete Global promotions
             params.push(req.user.store_id);
         }
 
@@ -1813,12 +1993,12 @@ app.delete('/api/promotions/:code', authenticateToken, async (req, res) => {
 
 app.get('/api/promotions/validate/:code', authenticateToken, async (req, res) => {
     try {
-        let query = 'SELECT * FROM promotions WHERE code = $1';
-        let params = [req.params.code];
+        let query = 'SELECT * FROM promotions WHERE code = $1 AND tenant_id = $2';
+        let params = [req.params.code, req.user.tenant_id];
 
         // Validate branch applicability
         if (req.user && req.user.role !== 'admin' && req.user.role !== 'ceo' && req.user.store_id) {
-            query += ' AND (branch_id = $2 OR branch_id IS NULL)';
+            query += ' AND branch_id = $3';
             params.push(req.user.store_id);
         }
 
@@ -1847,18 +2027,47 @@ app.get('/products', authenticateToken, async (req, res) => {
             WHERE stock_levels IS NULL OR stock_levels = '{}'::jsonb
         `);
 
+        // Support Pagination & Search parameters
+        const page = Math.max(1, parseInt(req.query.page) || 1);
+        const limitParam = req.query.limit;
+        const limit = limitParam === 'all' ? null : Math.max(1, parseInt(limitParam) || 20);
+        const offset = limit ? (page - 1) * limit : 0;
+        const search = req.query.search ? req.query.search.trim() : null;
+
+        let queryParams = [req.user.tenant_id];
+        let whereClause = `WHERE tenant_id = $1`;
+
+        if (search) {
+            queryParams.push(`%${search}%`);
+            whereClause += ` AND (name ILIKE $2 OR barcode ILIKE $2 OR category ILIKE $2)`;
+        }
+
+        let limitClause = '';
+        if (limit !== null) {
+            queryParams.push(limit);
+            limitClause = `LIMIT $${queryParams.length}`;
+            queryParams.push(offset);
+            limitClause += ` OFFSET $${queryParams.length}`;
+        }
+
         // Get products and ensure total stock matches sum of location stocks
         const result = await pool.query(`
             SELECT 
                 *,
+                COUNT(*) OVER() AS total_count,
                 COALESCE(
                     (SELECT SUM(CAST(value AS INTEGER)) 
                      FROM jsonb_each_text(COALESCE(stock_levels, '{}'))),
                     0
                 ) as calculated_total
             FROM products 
+            ${whereClause}
             ORDER BY name
-        `);
+            ${limitClause}
+        `, queryParams);
+
+        const totalItems = result.rows.length > 0 ? parseInt(result.rows[0].total_count) : 0;
+        const totalPages = limit ? Math.ceil(totalItems / limit) : 1;
 
         // Process rows - recalculate stock from stock_levels to keep in sync
         const rows = result.rows.map(p => {
@@ -1866,7 +2075,12 @@ app.get('/products', authenticateToken, async (req, res) => {
                 // Branch View: Show only stock for this branch
                 const levels = p.stock_levels || {};
                 const levelsObj = typeof levels === 'string' ? JSON.parse(levels) : levels;
-                p.stock = parseInt(levelsObj[userBranch] || 0);
+                let bStock = 0;
+                const poolKeys = new Set([userBranch]);
+                if (userBranch.toLowerCase().includes('dzorwulu')) { poolKeys.add('Dzorwulu'); poolKeys.add('DZORWULU'); }
+                if (userBranch.toLowerCase().includes('lakeside')) { poolKeys.add('Lakeside'); poolKeys.add('LAKESIDE'); }
+                for (const key of poolKeys) bStock += parseInt(levelsObj[key]) || 0;
+                p.stock = bStock;
             } else {
                 // Admin/CEO View: Show total stock
                 if (p.stock_levels && typeof p.stock_levels === 'object') {
@@ -1878,6 +2092,11 @@ app.get('/products', authenticateToken, async (req, res) => {
             delete p.calculated_total; // Remove the helper column
             return p;
         });
+
+        // Pass Pagination Meta Data via Headers
+        res.setHeader('X-Total-Count', totalItems);
+        res.setHeader('X-Total-Pages', totalPages);
+        res.setHeader('X-Current-Page', page);
 
         await logActivity(req, 'VIEW_INVENTORY_LIST');
         res.json(rows);
@@ -1900,23 +2119,57 @@ app.get('/api/products', authenticateToken, async (req, res) => {
             WHERE stock_levels IS NULL OR stock_levels = '{}'::jsonb
         `);
 
+        // Support Pagination & Search parameters
+        const page = Math.max(1, parseInt(req.query.page) || 1);
+        const limitParam = req.query.limit;
+        const limit = limitParam === 'all' ? null : Math.max(1, parseInt(limitParam) || 20);
+        const offset = limit ? (page - 1) * limit : 0;
+        const search = req.query.search ? req.query.search.trim() : null;
+
+        let queryParams = [req.user.tenant_id || 1];
+        let whereClause = `WHERE tenant_id = $1`;
+
+        if (search) {
+            queryParams.push(`%${search}%`);
+            whereClause += ` AND (name ILIKE $2 OR barcode ILIKE $2 OR category ILIKE $2)`;
+        }
+
+        let limitClause = '';
+        if (limit !== null) {
+            queryParams.push(limit);
+            limitClause = `LIMIT $${queryParams.length}`;
+            queryParams.push(offset);
+            limitClause += ` OFFSET $${queryParams.length}`;
+        }
+
         const result = await pool.query(`
             SELECT 
                 *,
+                COUNT(*) OVER() AS total_count,
                 COALESCE(
                     (SELECT SUM(CAST(value AS INTEGER)) 
                      FROM jsonb_each_text(COALESCE(stock_levels, '{}'))),
                     0
                 ) as calculated_total
             FROM products 
+            ${whereClause}
             ORDER BY name
-        `);
+            ${limitClause}
+        `, queryParams);
+
+        const totalItems = result.rows.length > 0 ? parseInt(result.rows[0].total_count) : 0;
+        const totalPages = limit ? Math.ceil(totalItems / limit) : 1;
 
         const rows = result.rows.map(p => {
             if (isRestricted && userBranch) {
                 const levels = p.stock_levels || {};
                 const levelsObj = typeof levels === 'string' ? JSON.parse(levels) : levels;
-                p.stock = parseInt(levelsObj[userBranch] || 0);
+                let bStock = 0;
+                const poolKeys = new Set([userBranch]);
+                if (userBranch.toLowerCase().includes('dzorwulu')) { poolKeys.add('Dzorwulu'); poolKeys.add('DZORWULU'); }
+                if (userBranch.toLowerCase().includes('lakeside')) { poolKeys.add('Lakeside'); poolKeys.add('LAKESIDE'); }
+                for (const key of poolKeys) bStock += parseInt(levelsObj[key]) || 0;
+                p.stock = bStock;
             } else {
                 if (p.stock_levels && typeof p.stock_levels === 'object') {
                     p.stock = p.calculated_total;
@@ -1927,6 +2180,11 @@ app.get('/api/products', authenticateToken, async (req, res) => {
             delete p.calculated_total;
             return p;
         });
+
+        // Pass Pagination Meta Data via Headers
+        res.setHeader('X-Total-Count', totalItems);
+        res.setHeader('X-Total-Pages', totalPages);
+        res.setHeader('X-Current-Page', page);
 
         await logActivity(req, 'VIEW_INVENTORY_LIST');
         res.json(rows);
@@ -1950,9 +2208,9 @@ app.get('/api/products/barcode/:barcode', authenticateToken, async (req, res) =>
                     p.stock::text
                 ) as stock_for_branch
             FROM products p
-            WHERE p.barcode = $1 OR p.group_barcode = $1
+            WHERE (p.barcode = $1 OR p.group_barcode = $1) AND p.tenant_id = $3
             LIMIT 1
-        `, [barcode, req.user.store_location || 'Main Warehouse']);
+        `, [barcode, req.user.store_location || 'Main Warehouse', req.user.tenant_id]);
 
         if (result.rows.length === 0) {
             return res.status(404).json({ message: 'Product not found' });
@@ -1975,14 +2233,9 @@ app.get('/api/products/full', authenticateToken, async (req, res) => {
         let userBranch = dbUser.store_location || req.user.store_location || 'Main Warehouse';
         const isRestricted = req.user.role !== 'admin' && req.user.role !== 'ceo';
 
-        // Custom logic for Company Portal users - find branch by location/name 'Dzorwulu'
-        if (req.user.type === 'company') {
-            const dzorBranchRes = await pool.query('SELECT id, name, location FROM branches WHERE name ILIKE $1 OR location ILIKE $1', ['%Dzorwulu%']);
-            if (dzorBranchRes.rows.length > 0) {
-                userBranch = dzorBranchRes.rows[0].name;
-            } else {
-                userBranch = 'Novelty Dzorwulu'; // Fallback
-            }
+        // Core mapping: Always link external company portals directly to the primary Dzorwulu warehouse
+        if (req.user.role === 'business_client' || req.user.type === 'company') {
+            userBranch = 'Novelty The Sparrow Ent Dzorwulu';
         }
 
         // Ensure all products have stock_levels initialized
@@ -1992,9 +2245,34 @@ app.get('/api/products/full', authenticateToken, async (req, res) => {
             WHERE stock_levels IS NULL OR stock_levels = '{}'::jsonb
         `);
 
+        // Support Pagination & Search parameters
+        const page = Math.max(1, parseInt(req.query.page) || 1);
+        const limitParam = req.query.limit;
+        const limit = limitParam === 'all' ? null : Math.max(1, parseInt(limitParam) || 20);
+        const offset = limit ? (page - 1) * limit : 0;
+        const search = req.query.search ? req.query.search.trim() : null;
+
+        let queryParams = [req.user.tenant_id || 1];
+        let whereClause = `WHERE tenant_id = $1`;
+
+        if (search) {
+            queryParams.push(`%${search}%`);
+            whereClause += ` AND (name ILIKE $2 OR barcode ILIKE $2 OR category ILIKE $2)`;
+        }
+
+        let limitClause = '';
+        if (limit !== null) {
+            queryParams.push(limit);
+            limitClause = `LIMIT $${queryParams.length}`;
+            queryParams.push(offset);
+            limitClause += ` OFFSET $${queryParams.length}`;
+        }
+
+        // Execute Paginated Fetch with Global ROW Count computation
         const result = await pool.query(`
             SELECT 
                 *,
+                COUNT(*) OVER() AS total_count,
                 COALESCE(
                     (SELECT SUM(CAST(value AS INTEGER)) 
                      FROM jsonb_each_text(COALESCE(stock_levels, '{}'))),
@@ -2003,8 +2281,14 @@ app.get('/api/products/full', authenticateToken, async (req, res) => {
                 (SELECT COUNT(*) FROM product_batches pb WHERE pb.product_barcode = products.barcode AND pb.status = 'Active') as batch_count,
                 (SELECT MIN(expiry_date) FROM product_batches pb WHERE pb.product_barcode = products.barcode AND pb.status = 'Active') as next_expiry
             FROM products 
+            ${whereClause}
             ORDER BY name
-        `);
+            ${limitClause}
+        `, queryParams);
+
+        // Extract total_count safely from the first row window function
+        const totalItems = result.rows.length > 0 ? parseInt(result.rows[0].total_count) : 0;
+        const totalPages = limit ? Math.ceil(totalItems / limit) : 1;
 
         // Map branch name for stock lookup (match how stock_levels keys are stored)
         const branchRes = await pool.query('SELECT id, name, location FROM branches WHERE name = $1 OR location = $1', [userBranch]);
@@ -2016,26 +2300,30 @@ app.get('/api/products/full', authenticateToken, async (req, res) => {
 
             // Get branch-specific stock with flexible naming for Dzorwulu/Novelty
             let branchStock = 0;
-            if (req.user.type === 'company') {
-                // Use the actual branch name first (e.g. 'NOVELTY'), then fallback to location
-                branchStock = parseInt(
-                    levelsObj[branchStockKey] ||
-                    levelsObj[userBranch] ||
-                    levelsObj['NOVELTY'] ||
-                    levelsObj['Novelty'] ||
-                    levelsObj['Dzorwulu'] ||
-                    levelsObj['DZORWULU'] ||
-                    levelsObj['Main Warehouse'] ||
-                    0
-                );
+            const possibleKeys = new Set([branchStockKey, userBranch]);
+
+            if (userBranch !== 'Main Warehouse') { 
+                if (userBranch.toLowerCase().includes('dzorwulu')) {
+                    possibleKeys.add('Dzorwulu');
+                    possibleKeys.add('DZORWULU');
+                }
+                if (userBranch.toLowerCase().includes('lakeside')) {
+                    possibleKeys.add('Lakeside');
+                    possibleKeys.add('LAKESIDE');
+                }
             } else {
-                branchStock = parseInt(levelsObj[branchStockKey] || levelsObj[userBranch] || 0);
+                possibleKeys.add('Main Warehouse');
+            }
+
+            // Safely sum all valid aliases (this effortlessly fixes stock fragmentation from branch renaming)
+            for (const key of possibleKeys) {
+                branchStock += parseInt(levelsObj[key]) || 0;
             }
 
             // Add stock_for_branch field for frontend
             p.stock_for_branch = branchStock;
 
-            if ((isRestricted && userBranch) || req.user.type === 'company') {
+            if ((isRestricted && userBranch) || req.user.role === 'business_client') {
                 // Branch View or Company Portal: Show only stock for this branch
                 p.stock = branchStock;
             } else {
@@ -2050,6 +2338,11 @@ app.get('/api/products/full', authenticateToken, async (req, res) => {
 
         // Set header with branch key for frontend reference
         res.setHeader('X-Branch-Stock-Key', branchStockKey);
+        
+        // Pass Pagination Meta Data via Headers to maintain Array backward-compatibility for POS
+        res.setHeader('X-Total-Count', totalItems);
+        res.setHeader('X-Total-Pages', totalPages);
+        res.setHeader('X-Current-Page', page);
 
         await logActivity(req, 'VIEW_INVENTORY_LIST');
         res.json(rows);
@@ -2073,9 +2366,9 @@ app.post('/api/products', authenticateToken, async (req, res) => {
         const stockLevels = JSON.stringify({ [userBranch]: stockValue });
 
         await pool.query(
-            `INSERT INTO products (barcode, name, category, price, stock, stock_levels, cost_price, selling_unit, packaging_unit, conversion_rate, reorder_level, track_batch, track_expiry) 
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
-            [barcode, name, category, price, stockValue, stockLevels, cost_price || 0, selling_unit || 'Unit', packaging_unit || 'Box', conversion_rate || 1, reorder_level || 10, track_batch, track_expiry]
+            `INSERT INTO products (barcode, name, category, price, stock, stock_levels, cost_price, selling_unit, packaging_unit, conversion_rate, reorder_level, track_batch, track_expiry, tenant_id) 
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
+            [barcode, name, category, price, stockValue, stockLevels, cost_price || 0, selling_unit || 'Unit', packaging_unit || 'Box', conversion_rate || 1, reorder_level || 10, track_batch, track_expiry, req.user.tenant_id]
         );
 
         // Insert Batch if provided and stock > 0
@@ -2336,7 +2629,7 @@ app.post('/api/products/bulk', authenticateToken, upload.single('file'), async (
                 const barcodeProvided = findColumn(['barcode', 'sku', 'productcode']).toString().trim();
 
                 if (barcodeProvided) {
-                    const barcodeRes = await pool.query('SELECT * FROM products WHERE barcode = $1', [barcodeProvided]);
+                    const barcodeRes = await pool.query('SELECT * FROM products WHERE barcode = $1 AND tenant_id = $2', [barcodeProvided, req.user.tenant_id]);
                     if (barcodeRes.rows.length > 0) {
                         existingProduct = barcodeRes.rows[0];
                         barcode = barcodeProvided;
@@ -2346,8 +2639,8 @@ app.post('/api/products/bulk', authenticateToken, upload.single('file'), async (
                 // If not found by barcode, try finding by Name + Category (Case-Insensitive)
                 if (!existingProduct) {
                     const nameCatRes = await pool.query(
-                        'SELECT * FROM products WHERE LOWER(name) = LOWER($1) AND LOWER(category) = LOWER($2)',
-                        [name, category]
+                        'SELECT * FROM products WHERE LOWER(name) = LOWER($1) AND LOWER(category) = LOWER($2) AND tenant_id = $3',
+                        [name, category, req.user.tenant_id]
                     );
                     if (nameCatRes.rows.length > 0) {
                         existingProduct = nameCatRes.rows[0];
@@ -2404,9 +2697,9 @@ app.post('/api/products/bulk', authenticateToken, upload.single('file'), async (
 
                     // Insert brand new product
                     await pool.query(
-                        `INSERT INTO products (barcode, name, category, price, cost_price, stock, stock_levels, selling_unit, packaging_unit, conversion_rate, reorder_level, track_batch, track_expiry)
-                         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, true, true)`,
-                        [barcode, name, category, price, cost, stock, stockLevels, sellingUnit, packagingUnit, conversionRate, reorderLevel]
+                        `INSERT INTO products (barcode, name, category, price, cost_price, stock, stock_levels, selling_unit, packaging_unit, conversion_rate, reorder_level, track_batch, track_expiry, tenant_id)
+                         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, true, true, $12)`,
+                        [barcode, name, category, price, cost, stock, stockLevels, sellingUnit, packagingUnit, conversionRate, reorderLevel, req.user.tenant_id]
                     );
                     console.log(`[BULK UPLOAD] INSERTED product: ${name} (${barcode}). Initial Stock: ${stock}`);
                 }
@@ -2542,10 +2835,10 @@ app.put('/api/products/:id', authenticateToken, async (req, res) => {
 
 app.delete('/products/:barcode', authenticateToken, async (req, res) => {
     try {
-        const productRes = await pool.query('SELECT name FROM products WHERE barcode = $1', [req.params.barcode]);
+        const productRes = await pool.query('SELECT name FROM products WHERE barcode = $1 AND tenant_id = $2', [req.params.barcode, req.user.tenant_id]);
         const productName = productRes.rows[0]?.name || 'Unknown';
 
-        await pool.query('DELETE FROM products WHERE barcode = $1', [req.params.barcode]);
+        await pool.query('DELETE FROM products WHERE barcode = $1 AND tenant_id = $2', [req.params.barcode, req.user.tenant_id]);
         await logActivity(req, 'DELETE_PRODUCT', { barcode: req.params.barcode, name: productName });
         res.json({ success: true });
     } catch (err) {
@@ -2557,10 +2850,10 @@ app.delete('/products/:barcode', authenticateToken, async (req, res) => {
 // new API prefix delete route for front-end compatibility
 app.delete('/api/products/:barcode', authenticateToken, async (req, res) => {
     try {
-        const productRes = await pool.query('SELECT name FROM products WHERE barcode = $1', [req.params.barcode]);
+        const productRes = await pool.query('SELECT name FROM products WHERE barcode = $1 AND tenant_id = $2', [req.params.barcode, req.user.tenant_id]);
         const productName = productRes.rows[0]?.name || 'Unknown';
 
-        await pool.query('DELETE FROM products WHERE barcode = $1', [req.params.barcode]);
+        await pool.query('DELETE FROM products WHERE barcode = $1 AND tenant_id = $2', [req.params.barcode, req.user.tenant_id]);
         await logActivity(req, 'DELETE_PRODUCT', { barcode: req.params.barcode, name: productName });
         res.json({ success: true });
     } catch (err) {
@@ -2603,12 +2896,12 @@ app.get('/transactions/all', authenticateToken, async (req, res) => {
 // --- CATEGORIES MANAGEMENT ---
 app.get('/api/categories', authenticateToken, async (req, res) => {
     try {
-        let query = 'SELECT * FROM categories';
-        let params = [];
+        let query = 'SELECT * FROM categories WHERE tenant_id = $1';
+        let params = [req.user.tenant_id];
 
         // Filter by branch for non-CEO/Admin users
         if (req.user.role !== 'admin' && req.user.role !== 'ceo' && req.user.store_id) {
-            query += ' WHERE branch_id = $1 OR branch_id IS NULL';
+            query += ' AND branch_id = $2';
             params.push(req.user.store_id);
         }
         query += ' ORDER BY name';
@@ -2631,7 +2924,7 @@ app.post('/api/categories', authenticateToken, async (req, res) => {
     const { name, description } = req.body;
     const branchId = req.user.store_id;
     try {
-        await pool.query('INSERT INTO categories (name, description, branch_id) VALUES ($1, $2, $3)', [name, description, branchId]);
+        await pool.query('INSERT INTO categories (name, description, branch_id, tenant_id) VALUES ($1, $2, $3, $4)', [name, description, branchId, req.user.tenant_id]);
         await logActivity(req, 'CREATE_CATEGORY', { name, branchId });
         res.json({ success: true });
     } catch (err) { console.error(err); res.status(500).json({ message: 'Error creating category' }); }
@@ -2639,11 +2932,11 @@ app.post('/api/categories', authenticateToken, async (req, res) => {
 
 app.delete('/api/categories/:id', authenticateToken, async (req, res) => {
     try {
-        let query = 'DELETE FROM categories WHERE id = $1';
-        let params = [req.params.id];
+        let query = 'DELETE FROM categories WHERE id = $1 AND tenant_id = $2';
+        let params = [req.params.id, req.user.tenant_id];
 
         if (req.user.role !== 'admin' && req.user.role !== 'ceo' && req.user.store_id) {
-            query += ' AND (branch_id = $2 OR branch_id IS NULL)';
+            query += ' AND branch_id = $3';
             params.push(req.user.store_id);
         }
 
@@ -2658,15 +2951,14 @@ app.delete('/api/categories/:id', authenticateToken, async (req, res) => {
 // --- SUPPLIER MANAGEMENT ---
 app.get('/api/suppliers', authenticateToken, async (req, res) => {
     try {
-        let query = `
-            SELECT s.*, b.name as branch_name, b.location as branch_location 
+        let query = `SELECT s.*, b.name as branch_name, b.location as branch_location 
             FROM suppliers s
             LEFT JOIN branches b ON s.branch_id = b.id
-        `;
-        let params = [];
+            WHERE s.tenant_id = $1`;
+        let params = [req.user.tenant_id];
 
         if (req.user.role !== 'admin' && req.user.role !== 'ceo' && req.user.store_id) {
-            query += ' WHERE s.branch_id = $1 OR s.branch_id IS NULL';
+            query += ' AND s.branch_id = $2';
             params.push(req.user.store_id);
         }
         query += ' ORDER BY s.name';
@@ -2682,8 +2974,8 @@ app.post('/api/suppliers', authenticateToken, async (req, res) => {
     const branchId = req.user.store_id;
     try {
         await pool.query(
-            'INSERT INTO suppliers (name, contact_person, phone, email, address, branch_id) VALUES ($1, $2, $3, $4, $5, $6)',
-            [name, contact, phone, email, address, branchId]
+            'INSERT INTO suppliers (name, contact_person, phone, email, address, branch_id, tenant_id) VALUES ($1, $2, $3, $4, $5, $6, $7)',
+            [name, contact, phone, email, address, branchId, req.user.tenant_id]
         );
         await logActivity(req, 'CREATE_SUPPLIER', { name, branchId });
         res.json({ success: true });
@@ -2693,11 +2985,11 @@ app.post('/api/suppliers', authenticateToken, async (req, res) => {
 app.put('/api/suppliers/:id', authenticateToken, async (req, res) => {
     const { name, contact, phone, email, address } = req.body;
     try {
-        let query = 'UPDATE suppliers SET name = $1, contact_person = $2, phone = $3, email = $4, address = $5 WHERE id = $6';
-        let params = [name, contact, phone, email, address, req.params.id];
+        let query = 'UPDATE suppliers SET name = $1, contact_person = $2, phone = $3, email = $4, address = $5 WHERE id = $6 AND tenant_id = $7';
+        let params = [name, contact, phone, email, address, req.params.id, req.user.tenant_id];
 
         if (req.user.role !== 'admin' && req.user.role !== 'ceo' && req.user.store_id) {
-            query += ' AND (branch_id = $7 OR branch_id IS NULL)';
+            query += ' AND branch_id = $8';
             params.push(req.user.store_id);
         }
 
@@ -2711,11 +3003,11 @@ app.put('/api/suppliers/:id', authenticateToken, async (req, res) => {
 
 app.delete('/api/suppliers/:id', authenticateToken, async (req, res) => {
     try {
-        let query = 'DELETE FROM suppliers WHERE id = $1';
-        let params = [req.params.id];
+        let query = 'DELETE FROM suppliers WHERE id = $1 AND tenant_id = $2';
+        let params = [req.params.id, req.user.tenant_id];
 
         if (req.user.role !== 'admin' && req.user.role !== 'ceo' && req.user.store_id) {
-            query += ' AND (branch_id = $2 OR branch_id IS NULL)';
+            query += ' AND branch_id = $3';
             params.push(req.user.store_id);
         }
 
@@ -2753,9 +3045,9 @@ app.put('/api/products/:identifier', authenticateToken, async (req, res) => {
         // Get current product to manage stock_levels
         let currentRes;
         if (isId) {
-            currentRes = await pool.query('SELECT id, barcode, stock_levels, track_batch, track_expiry FROM products WHERE id = $1', [paramIdentifier]);
+            currentRes = await pool.query('SELECT id, barcode, stock_levels, track_batch, track_expiry FROM products WHERE id = $1 AND tenant_id = $2', [paramIdentifier, req.user.tenant_id]);
         } else {
-            currentRes = await pool.query('SELECT id, barcode, stock_levels, track_batch, track_expiry FROM products WHERE barcode = $1', [paramIdentifier]);
+            currentRes = await pool.query('SELECT id, barcode, stock_levels, track_batch, track_expiry FROM products WHERE barcode = $1 AND tenant_id = $2', [paramIdentifier, req.user.tenant_id]);
         }
 
         if (currentRes.rows.length === 0) return res.status(404).json({ message: 'Product not found' });
@@ -2780,8 +3072,8 @@ app.put('/api/products/:identifier', authenticateToken, async (req, res) => {
         const finalBarcode = newBarcode || oldBarcode;
 
         await pool.query(
-            'UPDATE products SET barcode = $1, name = $2, category = $3, price = $4, stock = $5, stock_levels = $6, cost_price = $7, selling_unit = $8, packaging_unit = $9, conversion_rate = $10, reorder_level = $11, track_batch = $12, track_expiry = $13 WHERE id = $14',
-            [finalBarcode, name, category, price, totalStock, JSON.stringify(stockLevels), cost_price, selling_unit, packaging_unit, conversion_rate, reorder_level, track_batch ?? product.track_batch, track_expiry ?? product.track_expiry, productId]
+            'UPDATE products SET barcode = $1, name = $2, category = $3, price = $4, stock = $5, stock_levels = $6, cost_price = $7, selling_unit = $8, packaging_unit = $9, conversion_rate = $10, reorder_level = $11, track_batch = $12, track_expiry = $13 WHERE id = $14 AND tenant_id = $15',
+            [finalBarcode, name, category, price, totalStock, JSON.stringify(stockLevels), cost_price, selling_unit, packaging_unit, conversion_rate, reorder_level, track_batch ?? product.track_batch, track_expiry ?? product.track_expiry, productId, req.user.tenant_id]
         );
 
         // Cascade barcode change to batches if needed
@@ -3044,10 +3336,13 @@ app.get('/api/transfers', authenticateToken, async (req, res) => {
             params.push(userCanonicalLocation);
         }
 
-        query += ' ORDER BY created_at DESC';
+        query += ' ORDER BY transfer_date DESC';
         const result = await pool.query(query, params);
         res.json(result.rows);
-    } catch (err) { res.status(500).json({ message: 'Server error' }); }
+    } catch (err) { 
+        console.error('GET /api/transfers Error:', err.message);
+        res.status(500).json({ message: 'Server error: ' + err.message }); 
+    }
 });
 
 app.post('/api/transfers', authenticateToken, async (req, res) => {
@@ -3075,12 +3370,16 @@ app.post('/api/transfers', authenticateToken, async (req, res) => {
 
         console.log(`   Branch mapping: ${from} → ${mappedFrom}, ${to} → ${mappedTo}`);
 
+        if (mappedFrom === mappedTo) {
+            throw new Error(`Invalid Transfer: Both the 'From' (${from}) and 'To' (${to}) locations map to the exact same physical branch (${mappedFrom}). You cannot transfer stock into the same store.`);
+        }
+
         // Deduct Stock FIRST (validate and update)
         for (const item of items) {
             // Get current product stock data using product_id instead of barcode
             const checkRes = await client.query(`
-                SELECT stock, stock_levels, barcode, id FROM products WHERE id = $1
-            `, [item.product_id]);
+                SELECT stock, stock_levels, barcode, id FROM products WHERE id = $1 AND tenant_id = $2 FOR UPDATE
+            `, [item.product_id, req.user.tenant_id]);
 
             if (checkRes.rows.length === 0) {
                 throw new Error(`Product ${item.barcode || item.product_id} not found`);
@@ -3191,7 +3490,7 @@ app.post('/api/transfers/:id/receive', authenticateToken, async (req, res) => {
             console.log(`   📈 Destination: ${transfer.to_location}`);
 
             // Get current stock before update
-            const currentStockRes = await client.query('SELECT stock, stock_levels FROM products WHERE id = $1', [item.product_id]);
+            const currentStockRes = await client.query('SELECT stock, stock_levels FROM products WHERE id = $1 AND tenant_id = $2 FOR UPDATE', [item.product_id, req.user.tenant_id]);
             const currentStock = currentStockRes.rows[0];
 
             let currentBranchStock = 0;
@@ -3224,7 +3523,7 @@ app.post('/api/transfers/:id/receive', authenticateToken, async (req, res) => {
             `, [transfer.to_location, item.qty, item.product_id]);
 
             // Get updated stock after update
-            const updatedStockRes = await client.query('SELECT stock, stock_levels FROM products WHERE id = $1', [item.product_id]);
+            const updatedStockRes = await client.query('SELECT stock, stock_levels FROM products WHERE id = $1 AND tenant_id = $2', [item.product_id, req.user.tenant_id]);
             const updatedStock = updatedStockRes.rows[0];
 
             let updatedBranchStock = 0;
@@ -3293,7 +3592,7 @@ app.post('/api/stock-take', authenticateToken, async (req, res) => {
         await client.query('BEGIN');
         for (const adj of adjustments) {
             // Get current stock info to calculate variance
-            const resProd = await client.query('SELECT stock, stock_levels FROM products WHERE barcode = $1', [adj.barcode]);
+            const resProd = await client.query('SELECT stock, stock_levels FROM products WHERE barcode = $1 AND tenant_id = $2', [adj.barcode, req.user.tenant_id]);
             if (resProd.rows.length === 0) continue;
 
             const product = resProd.rows[0];
@@ -4012,7 +4311,7 @@ app.post('/api/debug/switch-role', authenticateToken, async (req, res) => {
         if (user.role === 'admin' || user.role === 'manager') redirectTo = '/dashboard';
         if (user.role === 'ceo') redirectTo = '/ceo-portal';
 
-        const token = jwt.sign(req.session.user, JWT_SECRET, { expiresIn: '24h' });
+        const token = jwt.sign(req.session.user, JWT_SECRET, { expiresIn: '7d' });
         await logActivity(req, 'DEBUG_SWITCH_ROLE', { targetRole });
 
         res.json({ success: true, token, redirectTo: redirectTo.replace(/^\//, ''), user: req.session.user });
@@ -4651,7 +4950,7 @@ app.post('/api/transactions', authenticateToken, async (req, res) => {
 
             // 1. Verify products exist (but allow negative stock)
             for (const item of items) {
-                const res = await client.query('SELECT name FROM products WHERE barcode = $1', [item.barcode]);
+                const res = await client.query('SELECT name FROM products WHERE barcode = $1 AND tenant_id = $2', [item.barcode, req.user.tenant_id]);
                 if (res.rows.length === 0) throw new Error(`Product ${item.barcode} not found`);
             }
 
@@ -4697,7 +4996,7 @@ app.post('/api/transactions', authenticateToken, async (req, res) => {
                     // Get product ID - use item.id if available, otherwise lookup by barcode
                     let productId = item.id;
                     if (!productId && item.barcode) {
-                        const prodRes = await client.query('SELECT id FROM products WHERE barcode = $1 LIMIT 1', [item.barcode]);
+                        const prodRes = await client.query('SELECT id FROM products WHERE barcode = $1 AND tenant_id = $2 LIMIT 1', [item.barcode, req.user.tenant_id]);
                         if (prodRes.rows.length > 0) {
                             productId = prodRes.rows[0].id;
                             console.log(`[RETURN] Found product ID ${productId} by barcode ${item.barcode}`);
@@ -4727,9 +5026,8 @@ app.post('/api/transactions', authenticateToken, async (req, res) => {
                         console.error(`[RETURN] Failed to update stock for product ID ${productId}`);
                     }
 
-                    // Add back to batches (reverse FIFO/FEFO)
                     const batches = await client.query(
-                        'SELECT * FROM product_batches WHERE product_barcode = $1 ORDER BY expiry_date ASC',
+                        'SELECT * FROM product_batches WHERE product_barcode = $1 ORDER BY expiry_date ASC FOR UPDATE',
                         [item.barcode]
                     );
 
@@ -4778,7 +5076,7 @@ app.post('/api/transactions', authenticateToken, async (req, res) => {
                     // FIFO/FEFO Batch Deduction
                     // Get batches ordered by expiry (FEFO)
                     const batches = await client.query(
-                        'SELECT * FROM product_batches WHERE product_barcode = $1 AND quantity > 0 ORDER BY expiry_date ASC',
+                        'SELECT * FROM product_batches WHERE product_barcode = $1 AND quantity > 0 ORDER BY expiry_date ASC FOR UPDATE',
                         [item.barcode]
                     );
 
@@ -5287,8 +5585,10 @@ app.get('/api/reports/stock-summary/:branch_id', authenticateToken, async (req, 
                 SUM(stock * price) as total_retail_value,
                 COUNT(CASE WHEN stock = 0 THEN 1 END) as out_of_stock_count,
                 COUNT(CASE WHEN stock <= reorder_level THEN 1 END) as low_stock_count
-            FROM products
-        `);
+            FROM products p
+            WHERE p.tenant_id = $1
+            ORDER BY p.name ASC
+        `, [req.user.tenant_id]);
         await logActivity(req, 'VIEW_REPORT_SUMMARY', { branch_id });
         res.json(result.rows[0]);
     } catch (err) {
@@ -5519,6 +5819,53 @@ app.put('/api/branches/:id', authenticateToken, async (req, res) => {
         console.error(err);
         res.status(500).json({ message: 'Error updating branch' });
     } finally { client.release(); }
+});
+
+// Delete Branch
+app.delete('/api/branches/:id', authenticateToken, async (req, res) => {
+    if (req.user.role !== 'admin' && req.user.role !== 'ceo') {
+        return res.status(403).json({ success: false, message: 'Unauthorized' });
+    }
+    
+    const branchId = parseInt(req.params.id, 10);
+    
+    if (branchId === 1) {
+        return res.status(403).json({ success: false, message: 'Cannot delete the Main Warehouse (ID 1) as it is a core system requirement.' });
+    }
+    
+    const client = await pool.connect();
+    try {
+        await client.query('BEGIN');
+        
+        // Ensure this branch belongs to the user's tenant
+        const checkBranch = await client.query('SELECT name FROM branches WHERE id = $1 AND tenant_id = $2', [branchId, req.user.tenant_id]);
+        if (checkBranch.rows.length === 0) {
+            await client.query('ROLLBACK');
+            return res.status(404).json({ success: false, message: 'Branch not found or belongs to another tenant.' });
+        }
+        
+        // Remove system settings reference first to prevent Foreign Key blocks
+        await client.query('DELETE FROM system_settings WHERE branch_id = $1', [branchId]);
+        
+        // Delete the branch
+        await client.query('DELETE FROM branches WHERE id = $1 AND tenant_id = $2', [branchId, req.user.tenant_id]);
+        
+        await client.query('COMMIT');
+        
+        await logActivity(req, 'DELETE_BRANCH', { branchId, branchName: checkBranch.rows[0].name });
+        res.json({ success: true, message: 'Branch deleted successfully.' });
+    } catch (err) {
+        await client.query('ROLLBACK');
+        console.error('Delete Branch Error:', err);
+        
+        // If a DB constrained error occurs (e.g. Sales exist pointing to branch ID)
+        if (err.code === '23503') {
+            return res.status(400).json({ success: false, message: 'Cannot delete branch because historical transaction data or active users are currently tied to it.' });
+        }
+        res.status(500).json({ success: false, message: 'Server error' });
+    } finally {
+        client.release();
+    }
 });
 
 // --- CREDIT AUTHORIZATION CODE ---
@@ -6700,7 +7047,7 @@ app.get('/api/company/dashboard', authenticateToken, async (req, res) => {
             pool.query('SELECT COUNT(*) as count FROM proforma_invoices WHERE created_by = $1', [companyId]),
             pool.query('SELECT COUNT(*) as count FROM sales_invoices WHERE created_by = $1', [companyId]),
             pool.query('SELECT COALESCE(SUM(total_amount), 0) as total FROM sales_invoices WHERE created_by = $1', [companyId]),
-            pool.query('SELECT COALESCE(SUM(balance_amount), 0) as total FROM sales_invoices WHERE created_by = $1 AND status != $2', [companyId, 'Paid']),
+            pool.query('SELECT COALESCE(SUM(total_amount - paid_amount), 0) as total FROM sales_invoices WHERE created_by = $1 AND status != $2', [companyId, 'Paid']),
             pool.query("SELECT COUNT(*) as count FROM proforma_invoices WHERE created_by = $1 AND status ILIKE 'Draft'", [companyId]),
             pool.query(`
                 SELECT 
@@ -7061,7 +7408,7 @@ app.post('/api/company/quick-sale', authenticateToken, async (req, res) => {
                             await client.query(`
                                 UPDATE products 
                                 SET stock = COALESCE(stock, 0) - $1
-                                WHERE ${productIdentifier}
+                                WHERE ${pid ? 'id = $2' : 'barcode = $2'}
                             `, [item.quantity, identifierValue]);
                         }
 
@@ -7077,7 +7424,7 @@ app.post('/api/company/quick-sale', authenticateToken, async (req, res) => {
                                 (COALESCE((stock_levels->>$2::text)::int, 0)), $4::int, 'Quick Sale', $5::int, 
                                 (SELECT id FROM branches WHERE name = $2::text LIMIT 1), 'Company Portal Quick Sale (' || $2 || ')'
                             FROM products WHERE ${pid ? 'id = $6' : 'barcode = $6'}
-                        `, [barcode || '', actualKey, item.quantity, newId, req.user.id, identifierValue]);
+                        `, [barcode || '', actualKey || targetBranch, item.quantity, newId, req.user.id, identifierValue]);
                     }
                 }
             }

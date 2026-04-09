@@ -443,7 +443,7 @@
         document.addEventListener('DOMContentLoaded', () => {
             
             // Load settings to get VAT rate for calculations
-            const token = sessionStorage.getItem('authToken');
+            const token = localStorage.getItem('authToken');
             fetch('/api/settings', { headers: { 'Authorization': `Bearer ${token}` } })
                 .then(res => res.ok ? res.json() : null)
                 .then(settings => {
@@ -455,7 +455,7 @@
 
             
             try {
-                const userStr = sessionStorage.getItem('currentUser');
+                const userStr = localStorage.getItem('currentUser');
                 if (userStr) {
                     const user = JSON.parse(userStr);
                     if(document.getElementById('userName')) document.getElementById('userName').textContent = user.name || user.fullName || 'User';
@@ -491,7 +491,7 @@
         let currentVatRate = 0.125; // Default VAT rate, will be updated from settings
 
         async function loadCustomers() {
-            const token = sessionStorage.getItem('authToken');
+            const token = localStorage.getItem('authToken');
             try {
                 const res = await fetch('/api/customers', { headers: { 'Authorization': `Bearer ${token}` } });
                 allCustomers = await res.json();
@@ -641,7 +641,7 @@
                 creditLimit: document.getElementById('cLimit').value,
                 status: 'Pending'
             };
-            const token = sessionStorage.getItem('authToken');
+            const token = localStorage.getItem('authToken');
             try {
                 const res = await fetch('/api/customers', {
                     method: 'POST',
@@ -671,7 +671,7 @@
             e.preventDefault();
             const id = document.getElementById('payCustomerId').value;
             const amount = document.getElementById('payAmount').value;
-            const token = sessionStorage.getItem('authToken');
+            const token = localStorage.getItem('authToken');
             
             try {
                 const res = await fetch(`/api/customers/${id}/payment`, {
@@ -700,7 +700,7 @@
             e.preventDefault();
             const id = document.getElementById('limitCustomerId').value;
             const newLimit = document.getElementById('newLimit').value;
-            const token = sessionStorage.getItem('authToken');
+            const token = localStorage.getItem('authToken');
             
             try {
                 const res = await fetch(`/api/customers/${id}`, {
@@ -736,7 +736,7 @@
             const monthVal = document.getElementById('stmtMonth').value; // YYYY-MM
             const [year, month] = monthVal.split('-').map(Number);
             
-            const token = sessionStorage.getItem('authToken');
+            const token = localStorage.getItem('authToken');
 
             // 1. Fetch All Transactions
             const res = await fetch('/transactions/all', {
@@ -865,7 +865,7 @@
                     const base64data = reader.result.split(',')[1];
                     const [year, month] = monthVal.split('-').map(Number);
                     const id = customer.id;
-                    const token = sessionStorage.getItem('authToken');
+                    const token = localStorage.getItem('authToken');
 
                     const emailRes = await fetch(`/api/customers/${id}/email-statement`, {
                         method: 'POST',
@@ -906,7 +906,7 @@
 
         async function confirmDeleteCustomer() {
             if (!customerToDeleteId) return;
-            const token = sessionStorage.getItem('authToken');
+            const token = localStorage.getItem('authToken');
             try {
                 const res = await fetch(`/api/customers/${customerToDeleteId}`, {
                     method: 'DELETE',
@@ -922,7 +922,7 @@
         }
 
         async function loadAuthCode() {
-            const token = sessionStorage.getItem('authToken');
+            const token = localStorage.getItem('authToken');
             try {
                 const res = await fetch('/api/settings/auth-code', { headers: { 'Authorization': `Bearer ${token}` } });
                 if (res.ok) {
@@ -943,7 +943,7 @@
         }
 
         async function confirmGenerateCode() {
-            const token = sessionStorage.getItem('authToken');
+            const token = localStorage.getItem('authToken');
             closeGenerateConfirmModal();
             try {
                 const res = await fetch('/api/settings/auth-code', { method: 'POST', headers: { 'Authorization': `Bearer ${token}` } });
@@ -985,7 +985,7 @@
         }
 
         async function logout() {
-            const token = sessionStorage.getItem('authToken');
+            const token = localStorage.getItem('authToken');
             await fetch('/api/logout', { method: 'POST', headers: { 'Authorization': `Bearer ${token}` } });
             window.location.href = '/login';
         }

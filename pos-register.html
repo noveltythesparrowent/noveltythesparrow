@@ -853,7 +853,7 @@
         // Load users from database
         async function loadUsers() {
             try {
-                const token = sessionStorage.getItem('authToken');
+                const token = localStorage.getItem('authToken');
                 const response = await fetch('/api/users', {
                     headers: { 'Authorization': `Bearer ${token}` }
                 });
@@ -909,7 +909,7 @@
             };
             
             try {
-                const token = sessionStorage.getItem('authToken');
+                const token = localStorage.getItem('authToken');
                 const response = await fetch('/api/users', {
                     method: 'POST',
                     headers: { 
@@ -1063,7 +1063,7 @@
             };
 
             try {
-                const token = sessionStorage.getItem('authToken');
+                const token = localStorage.getItem('authToken');
                 const response = await fetch(`/api/users/${userId}`, {
                     method: 'PUT',
                     headers: { 
@@ -1113,7 +1113,7 @@
             const userId = parseInt(document.getElementById('resetUserId').value);
             
             try {
-                const token = sessionStorage.getItem('authToken');
+                const token = localStorage.getItem('authToken');
                 const response = await fetch(`/api/users/${userId}/reset-password`, {
                     method: 'POST',
                     headers: { 
@@ -1154,7 +1154,7 @@
             closeConfirmation();
             
             try {
-                const token = sessionStorage.getItem('authToken');
+                const token = localStorage.getItem('authToken');
                 const response = await fetch(`/api/users/${id}`, {
                     method: 'DELETE',
                     headers: { 'Authorization': `Bearer ${token}` }
@@ -1182,7 +1182,7 @@
         // Logout function
         async function logout() {
             try {
-                const token = sessionStorage.getItem('authToken');
+                const token = localStorage.getItem('authToken');
                 await fetch('/api/logout', { 
                     method: 'POST',
                     headers: { 'Authorization': `Bearer ${token}` }
@@ -1205,7 +1205,7 @@
 
             // Auto-populate store from current user session
             try {
-                const userStr = sessionStorage.getItem('currentUser');
+                const userStr = localStorage.getItem('currentUser');
                 if (userStr) {
                     const user = JSON.parse(userStr);
                     

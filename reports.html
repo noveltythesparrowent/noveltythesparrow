@@ -327,7 +327,7 @@
 
             // Update User Info from Session
             try {
-                const userStr = sessionStorage.getItem('currentUser');
+                const userStr = localStorage.getItem('currentUser');
                 if (userStr) {
                     const user = JSON.parse(userStr);
                     if(document.getElementById('userName')) document.getElementById('userName').textContent = user.name || user.fullName || 'User';
@@ -337,7 +337,7 @@
 
             // 1. Load Shifts
             try {
-                const token = sessionStorage.getItem('authToken');
+                const token = localStorage.getItem('authToken');
                 const res = await fetch('/api/shifts/history', {
                     headers: { 'Authorization': `Bearer ${token}` }
                 });
@@ -350,11 +350,11 @@
 
             // 2. Load Transactions (From DB instead of localStorage)
             try {
-                const token = sessionStorage.getItem('authToken');
+                const token = localStorage.getItem('authToken');
                 
                 // Determine endpoint based on user role (Cashiers see only their own)
                 let endpoint = '/transactions/all';
-                const userStr = sessionStorage.getItem('currentUser');
+                const userStr = localStorage.getItem('currentUser');
                 if (userStr) {
                     const user = JSON.parse(userStr);
                     if (user.role !== 'admin' && user.role !== 'manager') {
@@ -507,7 +507,7 @@
         }
 
         async function loadAuditLogs() {
-            const token = sessionStorage.getItem('authToken');
+            const token = localStorage.getItem('authToken');
             try {
                 const res = await fetch('/api/audit-logs', { headers: { 'Authorization': `Bearer ${token}` } });
                 if (res.ok) {
@@ -651,7 +651,7 @@
 
         async function logout() {
             try {
-                const token = sessionStorage.getItem('authToken');
+                const token = localStorage.getItem('authToken');
                 await fetch('/api/logout', { 
                     method: 'POST',
                     headers: { 'Authorization': `Bearer ${token}` }

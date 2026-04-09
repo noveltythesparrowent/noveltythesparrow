@@ -325,7 +325,7 @@
 
         document.addEventListener('DOMContentLoaded', () => {
             // Load Settings from DB
-            const token = sessionStorage.getItem('authToken');
+            const token = localStorage.getItem('authToken');
             fetch('/api/settings', { headers: { 'Authorization': `Bearer ${token}` } })
                 .then(res => {
                     if (!res.ok) {
@@ -347,7 +347,7 @@
                 .catch(err => console.error('Error loading settings:', err));
 
             try {
-                const userStr = sessionStorage.getItem('currentUser');
+                const userStr = localStorage.getItem('currentUser');
                 if (userStr) {
                     const user = JSON.parse(userStr);
                     if (document.getElementById('userName')) document.getElementById('userName').textContent = user.name || user.fullName || 'User';
@@ -372,7 +372,7 @@
             };
 
             try {
-                const token = sessionStorage.getItem('authToken');
+                const token = localStorage.getItem('authToken');
                 const res = await fetch('/api/settings', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
@@ -397,7 +397,7 @@
 
         async function logout() {
             try {
-                const token = sessionStorage.getItem('authToken');
+                const token = localStorage.getItem('authToken');
                 await fetch('/api/logout', {
                     method: 'POST',
                     headers: { 'Authorization': `Bearer ${token}` }

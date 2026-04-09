@@ -376,11 +376,11 @@ function handleSuccessfulLogin(data, userType) {
     msg.classList.add("success");
     msg.style.display = "block";
 
-    // Store user info and token in sessionStorage
+    // Store user info and token in localStorage
     if (data.user) {
         const storageKey = userType === 'company' ? 'companyUser' : 'currentUser';
-        sessionStorage.setItem(storageKey, JSON.stringify(data.user));
-        if (data.token) sessionStorage.setItem(userType === 'company' ? 'companyToken' : 'authToken', data.token);
+        localStorage.setItem(storageKey, JSON.stringify(data.user));
+        if (data.token) localStorage.setItem(userType === 'company' ? 'companyToken' : 'authToken', data.token);
     }
 
     // Redirect based on user type and server response

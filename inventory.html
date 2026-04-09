@@ -2023,7 +2023,7 @@
 
         // Initialize current user from localStorage or session
         function initializeCurrentUser() {
-            const userStr = sessionStorage.getItem('currentUser');
+            const userStr = localStorage.getItem('currentUser');
             if (userStr) {
                 try {
                     currentUser = JSON.parse(userStr);
@@ -2078,7 +2078,7 @@
             document.getElementById('tab-' + tabId).classList.add('active');
             
             // Save state to session storage instead of URL
-            sessionStorage.setItem('activeInventoryTab', tabId);
+            localStorage.setItem('activeInventoryTab', tabId);
 
             // Update Page Title
             const titles = {
@@ -2126,7 +2126,7 @@
             
             // If no URL param, check session storage
             if (!tab) {
-                tab = sessionStorage.getItem('activeInventoryTab') || 'overview';
+                tab = localStorage.getItem('activeInventoryTab') || 'overview';
             }
             
             // Clean URL if needed (remove ?tab=...)
@@ -2161,7 +2161,7 @@
 
         async function loadCategories() {
             try {
-                const token = sessionStorage.getItem('authToken');
+                const token = localStorage.getItem('authToken');
                 const res = await fetch('/api/categories', {
                     headers: { 'Authorization': `Bearer ${token}` }
                 });
@@ -2222,13 +2222,17 @@
 
         async function loadInventory() {
             let resolvedBranchKey = null;
+            window.serverTotalStockItems = 0;
             try {
-                const token = sessionStorage.getItem('authToken');
-                const res = await fetch('/api/products/full?t=' + new Date().getTime(), {
+                const token = localStorage.getItem('authToken');
+                const searchVal = document.getElementById('searchInput')?.value?.trim() || '';
+                const qs = `?page=${stockPage}&limit=${stockRows}&search=${encodeURIComponent(searchVal)}`;
+                const res = await fetch('/api/products/full' + qs, {
                     headers: { 'Authorization': `Bearer ${token}` }
                 });
                 if (res.ok) {
                     resolvedBranchKey = res.headers.get('X-Branch-Stock-Key');
+                    window.serverTotalStockItems = parseInt(res.headers.get('X-Total-Count') || 0);
                     products = await res.json();
                 } else {
                     throw new Error('Failed to load products');
@@ -2305,17 +2309,17 @@
             const stockHeader = document.getElementById('stockColumnHeader');
             if(stockHeader) stockHeader.textContent = `Quantity`;
 
-            // Initialize filteredStock
-            filterInventory();
+            // Server-side paginated render
+            filteredStock = products; // Directly use server slice
+            renderStockTable();
         }
 
         function renderStockTable() {
             const tbody = document.getElementById('inventoryTable');
             tbody.innerHTML = '';
 
-            const start = (stockPage - 1) * stockRows;
-            const end = start + stockRows;
-            const pageData = filteredStock.slice(start, end);
+            // Using pure Server-Side array segment
+            const pageData = filteredStock;
 
             pageData.forEach(p => {
                 if (!p.stock_levels) p.stock_levels = { 'Main Warehouse': parseInt(p.stock) || 0 };
@@ -2351,9 +2355,11 @@
                     </tr>
                 `;
                 tbody.innerHTML += row;
-            });
-            
-            updatePagination('stock', filteredStock.length, stockPage, stockRows);
+                       });
+
+            // Feed the server-computed total directly into pagination widget
+            updatePagination('stock', window.serverTotalStockItems || filteredStock.length, stockPage, stockRows);
+            updateLowStockKPI();
         }
 
         function toggleAllStock(source) {
@@ -2374,7 +2380,7 @@
                 confirmButtonText: 'Delete All',
                 confirmButtonColor: '#c62828',
                 onConfirm: async () => {
-                    const token = sessionStorage.getItem('authToken');
+                    const token = localStorage.getItem('authToken');
                     let successCount = 0;
                     let failCount = 0;
                     
@@ -2494,31 +2500,16 @@
             document.getElementById('productModal').classList.add('active');
         }
 
+        // Debounce timer for Search
+        let searchTimeout;
+
         function filterInventory() {
-            const searchInput = document.getElementById('searchInput');
-            if (!searchInput) return;
-            
-            const searchText = searchInput.value.toLowerCase();
-            const category = document.getElementById('categoryFilter').value;
-            const lowStockOnly = document.getElementById('lowStockFilter').checked;
-
-            filteredStock = products.filter(p => {
-                const barcode = (p.barcode || '').toLowerCase();
-                const name = (p.name || '').toLowerCase();
-                const rowCategory = p.category || 'General';
-
-                const stock = inventoryDisplayStock(p);
-
-                const matchesSearch = name.includes(searchText) || barcode.includes(searchText);
-                const matchesCategory = category === '' || rowCategory === category;
-                const reorderLevel = p.reorder_level !== undefined && p.reorder_level !== null ? p.reorder_level : 10;
-                const matchesStock = !lowStockOnly || stock <= reorderLevel;
-
-                return matchesSearch && matchesCategory && matchesStock;
-            });
-            
-            stockPage = 1;
-            renderStockTable();
+            // Frontend filter overridden by Server-Side Query Request
+            clearTimeout(searchTimeout);
+            searchTimeout = setTimeout(() => {
+                stockPage = 1;
+                loadInventory();
+            }, 300);
         }
 
         function calculateSellingPrice() {
@@ -2589,7 +2580,7 @@
                 const exists = !!id;
                 const url = exists ? `/api/products/${id}` : `/api/products`;
                 const method = exists ? 'PUT' : 'POST';
-                const token = sessionStorage.getItem('authToken');
+                const token = localStorage.getItem('authToken');
 
                 const res = await fetch(url, {
                     method: method,
@@ -2643,6 +2634,28 @@
             document.getElementById('deleteModal').classList.add('active');
         }
 
+        function changePage(tab, newPage) {
+            if (tab === 'stock') {
+                stockPage = newPage;
+                loadInventory(); // Server-Side Pagination triggers fetch
+            } else if (tab === 'cat') {
+                catPage = newPage;
+                renderCategoryTable();
+            } else if (tab === 'transfers') {
+                transferPage = newPage;
+                renderTransfers();
+            } else if (tab === 'reports') {
+                reportPage = newPage;
+                renderReports();
+            } else if (tab === 'audit') {
+                auditPage = newPage;
+                renderAuditLog();
+            } else if (tab === 'receivables') {
+                receivablesPage = newPage;
+                renderReceivables();
+            }
+        }
+
         function closeDeleteModal() {
             document.getElementById('deleteModal').classList.remove('active');
             productToDelete = null;
@@ -2652,7 +2665,7 @@
             if (!productToDelete) return;
             
             try {
-                const token = sessionStorage.getItem('authToken');
+                const token = localStorage.getItem('authToken');
                 const res = await fetch(`/api/products/${productToDelete}`, { 
                     method: 'DELETE',
                     headers: { 'Authorization': `Bearer ${token}` }
@@ -2867,7 +2880,7 @@
             formData.append('file', file);
 
             try {
-                const token = sessionStorage.getItem('authToken');
+                const token = localStorage.getItem('authToken');
                 const res = await fetch('/api/products/bulk', {
                     method: 'POST',
                     headers: { 'Authorization': `Bearer ${token}` },
@@ -2905,7 +2918,7 @@
         // --- SUPPLIER FUNCTIONS ---
         async function loadSuppliers() {
             try {
-                const token = sessionStorage.getItem('authToken');
+                const token = localStorage.getItem('authToken');
                 const res = await fetch('/api/suppliers', {
                     headers: { 'Authorization': `Bearer ${token}` }
                 });
@@ -2980,7 +2993,7 @@
             };
 
             try {
-                const token = sessionStorage.getItem('authToken');
+                const token = localStorage.getItem('authToken');
                 let endpoint = '/api/suppliers';
                 let method = 'POST';
 
@@ -3021,7 +3034,7 @@
         async function confirmDeleteSupplier() {
             if (supplierToDelete !== null) {
                 try {
-                    const token = sessionStorage.getItem('authToken');
+                    const token = localStorage.getItem('authToken');
                     const res = await fetch(`/api/suppliers/${supplierToDelete}`, {
                         method: 'DELETE',
                         headers: { 'Authorization': `Bearer ${token}` }
@@ -3079,7 +3092,7 @@
         // --- PROCUREMENT FUNCTIONS ---
         async function loadPOs() {
             try {
-                const token = sessionStorage.getItem('authToken');
+                const token = localStorage.getItem('authToken');
                 const res = await fetch('/api/purchase-orders', {
                     headers: { 'Authorization': `Bearer ${token}` }
                 });
@@ -3186,7 +3199,7 @@
 
         async function viewPO(id) {
             try {
-                const token = sessionStorage.getItem('authToken');
+                const token = localStorage.getItem('authToken');
                 const res = await fetch(`/api/purchase-orders/${id}`, {
                     headers: { 'Authorization': `Bearer ${token}` }
                 });
@@ -3296,7 +3309,7 @@
                 items: poItems
             };
 
-            const token = sessionStorage.getItem('authToken');
+            const token = localStorage.getItem('authToken');
             try {
                 const res = await fetch('/api/purchase-orders', {
                     method: 'POST',
@@ -3324,7 +3337,7 @@
 
         async function receiveGoods(id) {
             try {
-                const token = sessionStorage.getItem('authToken');
+                const token = localStorage.getItem('authToken');
                 const res = await fetch(`/api/purchase-orders/${id}`, {
                     headers: { 'Authorization': `Bearer ${token}` }
                 });
@@ -3399,7 +3412,7 @@
                 } catch (e) { console.error("File processing error", e); }
             }
 
-            const token = sessionStorage.getItem('authToken');
+            const token = localStorage.getItem('authToken');
             try {
                 const res = await fetch(`/api/purchase-orders/${currentReceivingPO.id}/receive`, {
                     method: 'POST',
@@ -3440,7 +3453,7 @@
             
             if (!confirm(`Receive ${checkboxes.length} selected orders?`)) return;
             
-            const token = sessionStorage.getItem('authToken');
+            const token = localStorage.getItem('authToken');
             for (const chk of checkboxes) {
                 const id = chk.value;
                 await fetch(`/api/purchase-orders/${id}/receive`, { 
@@ -3459,7 +3472,7 @@
         // --- DISTRIBUTION FUNCTIONS ---
         async function loadTransfers() {
             try {
-                const token = sessionStorage.getItem('authToken');
+                const token = localStorage.getItem('authToken');
                 const res = await fetch('/api/transfers', {
                     headers: { 'Authorization': `Bearer ${token}` }
                 });
@@ -3512,7 +3525,7 @@
 
             // Fetch branches from API and populate To Location
             try {
-                const token = sessionStorage.getItem('authToken');
+                const token = localStorage.getItem('authToken');
                 const res = await fetch('/api/branches', {
                     headers: { 'Authorization': `Bearer ${token}` }
                 });
@@ -3602,7 +3615,7 @@
             // Get correct branch mapping for stock lookup
             let mappedFromLoc = fromLoc;
             try {
-                const token = sessionStorage.getItem('authToken');
+                const token = localStorage.getItem('authToken');
                 const mappingRes = await fetch('/api/branch-mapping', {
                     headers: { 'Authorization': `Bearer ${token}` }
                 });
@@ -3652,7 +3665,7 @@
             }
 
             try {
-                const token = sessionStorage.getItem('authToken');
+                const token = localStorage.getItem('authToken');
                 const res = await fetch(`/api/batches/product/${barcode}`, {
                     headers: { 'Authorization': `Bearer ${token}` }
                 });
@@ -3810,7 +3823,7 @@
             // Get branch mapping for stock validation
             let mappedFrom = from;
             try {
-                const token = sessionStorage.getItem('authToken');
+                const token = localStorage.getItem('authToken');
                 const mappingRes = await fetch('/api/branch-mapping', {
                     headers: { 'Authorization': `Bearer ${token}` }
                 });
@@ -3867,7 +3880,7 @@
                 items: transferItems
             };
             
-            const token = sessionStorage.getItem('authToken');
+            const token = localStorage.getItem('authToken');
             try {
                 const res = await fetch('/api/transfers', {
                     method: 'POST',
@@ -3902,7 +3915,7 @@
                 confirmButtonText: 'Receive',
                 confirmButtonColor: 'var(--secondary-color)',
                 onConfirm: async () => {
-                    const token = sessionStorage.getItem('authToken');
+                    const token = localStorage.getItem('authToken');
                     try {
                         const res = await fetch(`/api/transfers/${id}/receive`, { 
                             method: 'POST',
@@ -3922,7 +3935,7 @@
 
         async function viewTransfer(id) {
             try {
-                const token = sessionStorage.getItem('authToken');
+                const token = localStorage.getItem('authToken');
                 const res = await fetch('/api/transfers', {
                     headers: { 'Authorization': `Bearer ${token}` }
                 }); // In real app, fetch single /api/transfers/:id
@@ -4018,7 +4031,7 @@
 
         async function loadYTDStats() {
             try {
-                const token = sessionStorage.getItem('authToken');
+                const token = localStorage.getItem('authToken');
                 const res = await fetch('/api/analytics/ytd/all', {
                     headers: { 'Authorization': `Bearer ${token}` }
                 });
@@ -4061,7 +4074,7 @@
             // 2. Suppliers & Categories
             const totalSuppliers = suppliers.length;
             let totalCategories = 0;
-            const token = sessionStorage.getItem('authToken');
+            const token = localStorage.getItem('authToken');
             try {
                 const res = await fetch('/api/categories', {
                     headers: { 'Authorization': `Bearer ${token}` }
@@ -4181,7 +4194,7 @@
             const name = document.getElementById('catName').value;
             const description = document.getElementById('catDesc').value;
 
-            const token = sessionStorage.getItem('authToken');
+            const token = localStorage.getItem('authToken');
             try {
                 const res = await fetch('/api/categories', {
                     method: 'POST',
@@ -4209,7 +4222,7 @@
         async function confirmDeleteCategory() {
             if (categoryToDelete !== null) {
                 try {
-                    const token = sessionStorage.getItem('authToken');
+                    const token = localStorage.getItem('authToken');
                     const res = await fetch(`/api/categories/${categoryToDelete}`, { 
                         method: 'DELETE',
                         headers: { 'Authorization': `Bearer ${token}` }
@@ -4345,7 +4358,7 @@
                     
                     if (adjustments.length === 0) return showNotification("No discrepancies found to update.", "success");
                     
-                    const token = sessionStorage.getItem('authToken');
+                    const token = localStorage.getItem('authToken');
                     try {
                         const res = await fetch('/api/stock-take', {
                             method: 'POST',
@@ -4379,7 +4392,7 @@
 
             // Load Shelf Inventory
             try {
-                const token = sessionStorage.getItem('authToken');
+                const token = localStorage.getItem('authToken');
                 const branchId = (currentUser && currentUser.store_id) ? currentUser.store_id : 1;
                 const res = await fetch(`/api/shelf/inventory/${branchId}`, {
                     headers: { 'Authorization': `Bearer ${token}` }
@@ -4477,7 +4490,7 @@
             if (!barcode) return;
 
             try {
-                const token = sessionStorage.getItem('authToken');
+                const token = localStorage.getItem('authToken');
                 const res = await fetch(`/api/batches/product/${barcode}`, {
                     headers: { 'Authorization': `Bearer ${token}` }
                 });
@@ -4520,7 +4533,7 @@
                 to_location: 'Shelf'
             };
 
-            const token = sessionStorage.getItem('authToken');
+            const token = localStorage.getItem('authToken');
             try {
                 const res = await fetch('/api/shelf/move', {
                     method: 'POST',
@@ -4551,7 +4564,7 @@
         // --- NEGATIVE STOCK FUNCTIONS ---
         async function loadNegativeStock() {
             try {
-                const token = sessionStorage.getItem('authToken');
+                const token = localStorage.getItem('authToken');
                 const res = await fetch('/api/inventory/negative-analysis', {
                     headers: { 'Authorization': `Bearer ${token}` }
                 });
@@ -4717,7 +4730,7 @@
             }
             
             try {
-                const token = localStorage.getItem('authToken') || sessionStorage.getItem('authToken');
+                const token = localStorage.getItem('authToken') || localStorage.getItem('authToken');
                 const updatePayload = { ...currentBarcodeProduct, barcode: newBarcode };
                 
                 const url = `/api/products/${currentBarcodeProduct.id}`;
@@ -4859,7 +4872,7 @@
             const newBarcode = Math.floor(100000000000 + Math.random() * 900000000000).toString();
             const updatePayload = { ...product, barcode: newBarcode };
 
-            const token = sessionStorage.getItem('authToken');
+            const token = localStorage.getItem('authToken');
             try {
                 const res = await fetch(`/api/products/${product.id}`, { 
                     method: 'PUT',
@@ -4892,7 +4905,7 @@
 
         async function logout() {
             try {
-                const token = sessionStorage.getItem('authToken');
+                const token = localStorage.getItem('authToken');
                 await fetch('/api/logout', { 
                     method: 'POST',
                     headers: { 'Authorization': `Bearer ${token}` }
@@ -4906,7 +4919,7 @@
 
         async function logClientActivity(action, details = {}) {
             try {
-                const token = sessionStorage.getItem('authToken');
+                const token = localStorage.getItem('authToken');
                 await fetch('/api/audit/log', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
@@ -4924,7 +4937,7 @@
         async function loadReturns() {
             try {
                 console.log('Loading returns...');
-                const token = sessionStorage.getItem('authToken');
+                const token = localStorage.getItem('authToken');
                 const res = await fetch('/api/transactions/returns', {
                     headers: { 'Authorization': `Bearer ${token}` }
                 });

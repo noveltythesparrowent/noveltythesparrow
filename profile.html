@@ -356,7 +356,7 @@
     </footer>
 
     <script>
-        const userStr = sessionStorage.getItem('currentUser');
+        const userStr = localStorage.getItem('currentUser');
         if (!userStr) window.location.href = '/';
         const user = JSON.parse(userStr);
 
@@ -376,7 +376,7 @@
         document.getElementById('displayStore').textContent = user.store_location || 'Not Assigned';
 
         async function goBack() {
-            const token = sessionStorage.getItem('authToken');
+            const token = localStorage.getItem('authToken');
             if (user.role === 'admin' || user.role === 'manager') {
                 window.location.href = 'dashboard';
             } else {
@@ -398,10 +398,10 @@
         }
         async function logout() {
             try {
-                const token = sessionStorage.getItem('authToken');
+                const token = localStorage.getItem('authToken');
                 await fetch('/api/logout', { method: 'POST', headers: { 'Authorization': `Bearer ${token}` } });
             } catch (e) { }
-            sessionStorage.clear();
+            localStorage.clear();
             localStorage.removeItem('currentUser'); // Cleanup
             window.location.href = '/login';
         }
@@ -432,7 +432,7 @@
             btn.textContent = "Updating...";
 
             try {
-                const token = sessionStorage.getItem('authToken');
+                const token = localStorage.getItem('authToken');
                 const res = await fetch('/api/update-password', {
                     method: 'POST',
                     headers: {

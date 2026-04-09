@@ -266,7 +266,7 @@
 
         async function checkAuth() {
             // Immediate UI update from session storage
-            const userStr = sessionStorage.getItem('currentUser');
+            const userStr = localStorage.getItem('currentUser');
             if (userStr) {
                 const user = JSON.parse(userStr);
                 document.getElementById('userName').textContent = user.name || 'User';
@@ -274,7 +274,7 @@
             }
 
             try {
-                const token = sessionStorage.getItem('authToken');
+                const token = localStorage.getItem('authToken');
                 const response = await fetch('/api/session', {
                     headers: { 'Authorization': `Bearer ${token}` }
                 });
@@ -293,7 +293,7 @@
 
         async function loadPromotions() {
             try {
-                const token = sessionStorage.getItem('authToken');
+                const token = localStorage.getItem('authToken');
                 const res = await fetch('/api/promotions', {
                     headers: { 'Authorization': `Bearer ${token}` }
                 });
@@ -365,7 +365,7 @@
             if (!code || !discount) return alert("Please fill all fields");
 
             try {
-                const token = sessionStorage.getItem('authToken');
+                const token = localStorage.getItem('authToken');
                 const res = await fetch('/api/promotions', {
                     method: 'POST',
                     headers: { 
@@ -392,7 +392,7 @@
                 `Are you sure you want to delete promo code: ${code}?`,
                 async () => {
                     try {
-                        const token = sessionStorage.getItem('authToken');
+                        const token = localStorage.getItem('authToken');
                         const res = await fetch(`/api/promotions/${code}`, { 
                             method: 'DELETE',
                             headers: { 'Authorization': `Bearer ${token}` }
@@ -410,7 +410,7 @@
 
         async function logout() {
             try {
-                const token = sessionStorage.getItem('authToken');
+                const token = localStorage.getItem('authToken');
                 await fetch('/api/logout', { 
                     method: 'POST',
                     headers: { 'Authorization': `Bearer ${token}` }

@@ -182,7 +182,7 @@
 
         async function loadShiftInfo() {
             try {
-                const token = sessionStorage.getItem('authToken');
+                const token = localStorage.getItem('authToken');
                 const res = await fetch('/api/shifts/active', {
                     headers: { 'Authorization': `Bearer ${token}` }
                 });
@@ -206,7 +206,7 @@
 
         async function loadHistory() {
             try {
-                const token = sessionStorage.getItem('authToken');
+                const token = localStorage.getItem('authToken');
                 const res = await fetch('/transactions/me', {
                     headers: { 'Authorization': `Bearer ${token}` }
                 });

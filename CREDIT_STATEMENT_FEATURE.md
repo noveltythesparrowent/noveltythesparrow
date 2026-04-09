@@ -280,7 +280,7 @@ const response = await fetch('/api/customers/14/email-statement', {
   method: 'POST',
   headers: {
     'Content-Type': 'application/json',
-    'Authorization': `Bearer ${sessionStorage.getItem('authToken')}`
+    'Authorization': `Bearer ${localStorage.getItem('authToken')}`
   },
   body: JSON.stringify({ month: 1, year: 2026 })
 });

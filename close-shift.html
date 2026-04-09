@@ -186,7 +186,7 @@
         document.addEventListener('DOMContentLoaded', async () => {
             try {
                 // Check session
-                const token = sessionStorage.getItem('authToken');
+                const token = localStorage.getItem('authToken');
                 const sessionRes = await fetch('/api/session', {
                     headers: { 'Authorization': `Bearer ${token}` }
                 });
@@ -226,7 +226,7 @@
             e.preventDefault();
             const endCash = document.getElementById('actualCash').value;
             const notes = document.getElementById('notes').value;
-            const token = sessionStorage.getItem('authToken');
+            const token = localStorage.getItem('authToken');
 
             const res = await fetch('/api/shifts/close', {
                 method: 'POST',

@@ -29,7 +29,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 
     // 2. Check Authentication Token
-    const token = sessionStorage.getItem('authToken');
+    const token = localStorage.getItem('authToken');
     
     if (!token) {
         // If not logged in and not on login page, redirect
@@ -93,7 +93,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
 async function handleLogout() {
     try {
-        const token = sessionStorage.getItem('authToken');
+        const token = localStorage.getItem('authToken');
         if (token) {
             await fetch('/api/logout', { 
                 method: 'POST',
@@ -103,7 +103,7 @@ async function handleLogout() {
     } catch (e) {
         console.error('Logout API error', e);
     } finally {
-        sessionStorage.clear();
+        localStorage.clear();
         window.location.href = '/login';
     }
 }

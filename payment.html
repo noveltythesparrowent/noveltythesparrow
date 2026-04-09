@@ -347,18 +347,18 @@
         transactionId = urlParams.get('id');
 
         if (transactionId) {
-            sessionStorage.setItem('currentPaymentId', transactionId);
+            localStorage.setItem('currentPaymentId', transactionId);
             const cleanPath = window.location.pathname.replace(/\.html$/, '');
             window.history.replaceState({}, document.title, cleanPath);
         } else {
-            transactionId = sessionStorage.getItem('currentPaymentId');
+            transactionId = localStorage.getItem('currentPaymentId');
         }
 
         if (!transactionId) {
             alert("No transaction ID found.");
             window.location.href = 'pos';
         } else {
-            const token = sessionStorage.getItem('authToken');
+            const token = localStorage.getItem('authToken');
             fetch(`/transactions/${transactionId}`, {
                 headers: { 'Authorization': `Bearer ${token}` }
             })
@@ -408,7 +408,7 @@
         }
 
         function loadCustomer(id) {
-            const token = sessionStorage.getItem('authToken');
+            const token = localStorage.getItem('authToken');
             fetch(`/api/customers/${id}`, { headers: { 'Authorization': `Bearer ${token}` } })
                 .then(res => res.json())
                 .then(c => {
@@ -419,7 +419,7 @@
         }
 
         function loadAllCustomers() {
-            const token = sessionStorage.getItem('authToken');
+            const token = localStorage.getItem('authToken');
             fetch('/api/customers', { headers: { 'Authorization': `Bearer ${token}` } })
                 .then(res => res.json())
                 .then(data => {
@@ -576,7 +576,7 @@
                 const phone = document.getElementById('momoPhone').value;
                 const provider = document.querySelector('.provider-select').value;
 
-                const token = sessionStorage.getItem('authToken');
+                const token = localStorage.getItem('authToken');
                 try {
                     const res = await fetch('/pay/momo', {
                         method: 'POST',
@@ -636,7 +636,7 @@
             const code = prompt("MANAGER: Enter Authorization Code to override credit limit:");
             if (!code) return;
 
-            const token = sessionStorage.getItem('authToken');
+            const token = localStorage.getItem('authToken');
             try {
                 const res = await fetch('/api/verify-auth-code', {
                     method: 'POST',
@@ -667,7 +667,7 @@
             const poll = setInterval(async () => {
                 attempts++;
                 try {
-                    const token = sessionStorage.getItem('authToken');
+                    const token = localStorage.getItem('authToken');
                     const res = await fetch(`/pay/momo/status/${referenceId}`, {
                         headers: { 'Authorization': `Bearer ${token}` }
                     });
@@ -696,7 +696,7 @@
         async function finalizeSale(method, trxId, customerId = null) {
             // Finalize in Database
             try {
-                const token = sessionStorage.getItem('authToken');
+                const token = localStorage.getItem('authToken');
                 console.log('💾 FINALIZE: Transaction ID:', transactionId, '| Method:', method, '| Receipt:', trxId, '| Customer ID:', customerId);
                 
                 const response = await fetch(`/transactions/${transactionId}/finalize`, {
@@ -751,7 +751,7 @@
             }
 
             try {
-                const authToken = sessionStorage.getItem('authToken');
+                const authToken = localStorage.getItem('authToken');
                 const res = await fetch('/api/verify-auth-code', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${authToken}` },

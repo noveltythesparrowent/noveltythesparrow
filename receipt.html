@@ -334,7 +334,7 @@
             }
 
             try {
-                const token = sessionStorage.getItem('authToken') || sessionStorage.getItem('companyToken');
+                const token = localStorage.getItem('authToken') || localStorage.getItem('companyToken');
                 
                 // 1. Fetch Settings (for Store Name/Footer)
                 const settingsRes = await fetch('/api/settings', { headers: { 'Authorization': `Bearer ${token}` } });

@@ -24,7 +24,7 @@
         body { background: var(--gray-light); display: flex; flex-direction: column; min-height: 100vh; }
         
         /* Sidebar */
-        .sidebar { width: var(--sidebar-width); background: linear-gradient(135deg, var(--primary-color), var(--secondary-color)); color: white; display: flex; flex-direction: column; position: fixed; height: 100vh; z-index: 100; transition: 0.3s; }
+        .sidebar { width: var(--sidebar-width); background: linear-gradient(135deg, var(--primary-color), var(--secondary-color)); color: white; display: flex; flex-direction: column; position: fixed; top: 0; left: 0; height: 100vh; z-index: 1000; transition: 0.3s; }
         .brand { padding: 25px; font-size: 24px; font-weight: 700; letter-spacing: 1px; border-bottom: 1px solid rgba(255,255,255,0.1); font-family: 'Montserrat', sans-serif; display: flex; align-items: center; gap: 10px; }
         .nav-links { flex: 1; padding-top: 20px; }
         .nav-item { display: flex; align-items: center; padding: 15px 25px; color: rgba(255,255,255,0.7); text-decoration: none; transition: 0.3s; font-size: 14px; cursor: pointer; }
@@ -163,8 +163,7 @@
             *, *::before, *::after { box-sizing: border-box; }
             html, body { overflow-x: hidden; width: 100%; }
 
-            /* Hide sidebar on mobile, make content full width */
-            .sidebar { display: none; }
+            /* Hide sidebar by sliding it, not display:none */
             .main-content { margin-left: 0 !important; padding: 16px !important; width: 100%; }
             footer { margin-left: 0 !important; }
 
@@ -325,7 +324,7 @@
         
         @media (max-width: 992px) {
             .sidebar { transform: translateX(-100%); box-shadow: 5px 0 15px rgba(0,0,0,0.1); }
-            .sidebar.active { transform: translateX(0); }
+            .sidebar.active { transform: translateX(0) !important; }
             .main-content { margin-left: 0; padding: 20px; width: 100%; }
             .mobile-menu-btn { display: block; }
             .sidebar-overlay.active { display: block; }
@@ -1122,7 +1121,7 @@
                 </div>
                 <div class="modal-footer">
                     <button class="btn-control btn-white" onclick="closeBranchModal()">Cancel</button>
-                    <button class="btn-control btn-primary" onclick="saveBranch()">Save Branch</button>
+                    <button class="btn-control btn-primary" onclick="saveBranch(this)">Save Branch</button>
                 </div>
             </div>
         </div>
@@ -1540,7 +1539,7 @@
 
         async function initPortal() {
             try {
-                const token = sessionStorage.getItem('authToken');
+                const token = localStorage.getItem('authToken');
                 if (!token) {
                     window.location.href = '/login';
                     return;
@@ -1637,7 +1636,7 @@
         }
 
         async function loadBranches() {
-            const token = sessionStorage.getItem('authToken');
+            const token = localStorage.getItem('authToken');
             try {
                 const startDate = document.getElementById('analyticsStart').value;
                 const endDate = document.getElementById('analyticsEnd').value;
@@ -1691,11 +1690,41 @@
                     <td data-label="VAT Rate">${b.vat_rate > 0 ? b.vat_rate + '%' : '-'}</td>
                     <td data-label="Transactions">${perf.txn_count || 0}</td>
                     <td data-label="Revenue" style="font-weight:600;">₵${parseFloat(perf.revenue || 0).toLocaleString()}</td>
-                    <td data-label="Action">
+                    <td data-label="Action" style="display:flex; gap:5px; flex-wrap:wrap;">
                         <button class="btn-control btn-white" style="padding:4px 10px; font-size:11px;" onclick="editBranch(${b.id})">Edit / Set VAT</button>
+                        <button class="btn-control" style="padding:4px 10px; font-size:11px; background:#ef4444; color:white; border:none;" onclick="confirmDeleteBranch(${b.id}, '${b.name.replace(/'/g, "\\'")}')"><i class="fas fa-trash"></i> Delete</button>
                     </td>
                 </tr>
             `}).join('');
+        }
+
+        async function confirmDeleteBranch(id, name) {
+            if (id === 1) {
+                showToast("Action Blocked: You cannot delete the Main Headquarters as it hosts core inventory.");
+                return;
+            }
+            if (!confirm(`CRITICAL WARNING: Are you sure you want to completely delete "${name}"?\n\nThis will physically remove the branch from all operational views. Revenue history will be preserved, but users assigned to this branch may lose portal access.`)) {
+                return;
+            }
+
+            const token = localStorage.getItem('authToken');
+            try {
+                const res = await fetch(`/api/branches/${id}`, {
+                    method: 'DELETE',
+                    headers: { 'Authorization': `Bearer ${token}` }
+                });
+                
+                const data = await res.json();
+                if (res.ok && data.success) {
+                    showToast(`Branch "${name}" removed from the network.`);
+                    loadBranches();
+                } else {
+                    alert(data.message || 'Failed to delete branch.');
+                }
+            } catch (err) {
+                console.error(err);
+                alert('An error occurred during deletion.');
+            }
         }
 
         function updateGoalTracker(current, target) {
@@ -1828,7 +1857,7 @@
         }
 
         async function loadPeakHours() {
-            const token = sessionStorage.getItem('authToken');
+            const token = localStorage.getItem('authToken');
             try {
                 const res = await fetch('/api/ceo/analytics/peak-hours', { headers: { 'Authorization': `Bearer ${token}` }});
                 if(res.ok) {
@@ -1865,7 +1894,7 @@
         }
 
         async function loadHighValueTxns() {
-            const token = sessionStorage.getItem('authToken');
+            const token = localStorage.getItem('authToken');
             try {
                 const res = await fetch('/api/ceo/transactions/high-value', { headers: { 'Authorization': `Bearer ${token}` }});
                 if(res.ok) {
@@ -1988,7 +2017,7 @@
         }
 
         async function renderTrendChart() {
-            const token = sessionStorage.getItem('authToken');
+            const token = localStorage.getItem('authToken');
             try {
                 const res = await fetch('/api/ceo/analytics/trend', { headers: { 'Authorization': `Bearer ${token}` }});
                 if(res.ok) {
@@ -2046,7 +2075,7 @@
         // --- NEW REAL-TIME DATA FUNCTIONS ---
 
         async function loadUsers() {
-            const token = sessionStorage.getItem('authToken');
+            const token = localStorage.getItem('authToken');
             const tbody = document.getElementById('usersTableBody');
             tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;">Loading users...</td></tr>';
             try {
@@ -2157,7 +2186,7 @@
                 `${newStatus === 'Active' ? 'Activate' : 'Deactivate'} User`,
                 `Are you sure you want to set ${user.fullName || user.name} to ${newStatus}?`,
                 async () => {
-                    const token = sessionStorage.getItem('authToken');
+                    const token = localStorage.getItem('authToken');
                     try {
                         const res = await fetch(`/api/users/${id}`, {
                             method: 'PUT',
@@ -2230,7 +2259,7 @@
             const user = allPortalUsers.find(u => u.id == id);
             const status = user ? user.status : 'Active';
 
-            const token = sessionStorage.getItem('authToken');
+            const token = localStorage.getItem('authToken');
             try {
                 const res = await fetch(`/api/users/${id}`, {
                     method: 'PUT',
@@ -2250,7 +2279,7 @@
         }
 
         async function loadAuditLogs() {
-            const token = sessionStorage.getItem('authToken');
+            const token = localStorage.getItem('authToken');
             try {
                 const res = await fetch('/api/audit-logs', { headers: { 'Authorization': `Bearer ${token}` } });
                 if (res.ok) {
@@ -2319,7 +2348,7 @@
         }
 
         async function loadRisks() {
-            const token = sessionStorage.getItem('authToken');
+            const token = localStorage.getItem('authToken');
             try {
                 const res = await fetch('/api/ceo/risks', { headers: { 'Authorization': `Bearer ${token}` }});
                 if(res.ok) {
@@ -2344,7 +2373,7 @@
         }
 
         async function loadPendingCreditApprovals() {
-            const token = sessionStorage.getItem('authToken');
+            const token = localStorage.getItem('authToken');
             try {
                 const res = await fetch('/api/ceo/approvals/credit-customers', { headers: { 'Authorization': `Bearer ${token}` }});
                 if(res.ok) {
@@ -2360,7 +2389,7 @@
         }
 
         async function loadApprovalHistory() {
-            const token = sessionStorage.getItem('authToken');
+            const token = localStorage.getItem('authToken');
             try {
                 const res = await fetch('/api/ceo/approvals/history', { headers: { 'Authorization': `Bearer ${token}` }});
                 if(res.ok) {
@@ -2517,7 +2546,7 @@
                 "Approve Customer",
                 "Are you sure you want to approve this credit customer?",
                 async () => {
-                    const token = sessionStorage.getItem('authToken');
+                    const token = localStorage.getItem('authToken');
                     try {
                         const res = await fetch(`/api/ceo/approvals/credit-customers/${id}/approve`, { method: 'POST', headers: { 'Authorization': `Bearer ${token}` }});
                         if (res.ok) {
@@ -2534,7 +2563,7 @@
                 "Reject Customer",
                 "Are you sure you want to reject this credit customer?",
                 async () => {
-                    const token = sessionStorage.getItem('authToken');
+                    const token = localStorage.getItem('authToken');
                     try {
                         const res = await fetch(`/api/ceo/approvals/credit-customers/${id}/reject`, { method: 'POST', headers: { 'Authorization': `Bearer ${token}` }});
                         if (res.ok) {
@@ -2547,7 +2576,7 @@
         }
 
         async function loadPeople() {
-            const token = sessionStorage.getItem('authToken');
+            const token = localStorage.getItem('authToken');
             try {
                 const res = await fetch('/api/ceo/staff-performance', { headers: { 'Authorization': `Bearer ${token}` }});
                 if(res.ok) {
@@ -2576,7 +2605,7 @@
         }
 
         async function loadOpsKPIs() {
-            const token = sessionStorage.getItem('authToken');
+            const token = localStorage.getItem('authToken');
             const selectedBranch = document.getElementById('globalBranchFilter').value;
 
             if (allBranches.length === 0) {
@@ -2692,7 +2721,7 @@
         }
 
         async function loadOpsBottlenecks() {
-            const token = sessionStorage.getItem('authToken');
+            const token = localStorage.getItem('authToken');
             const selectedBranch = document.getElementById('globalBranchFilter').value;
             
             try {
@@ -2844,7 +2873,7 @@
         }
 
         async function loadOpsSuppliers() {
-            const token = sessionStorage.getItem('authToken');
+            const token = localStorage.getItem('authToken');
             const selectedBranch = document.getElementById('globalBranchFilter').value;
             
             if (allBranches.length === 0) {
@@ -2916,7 +2945,7 @@
         }
 
         async function loadOpsPOs() {
-            const token = sessionStorage.getItem('authToken');
+            const token = localStorage.getItem('authToken');
             const selectedBranch = document.getElementById('globalBranchFilter').value;
             
             if (allBranches.length === 0) {
@@ -3017,7 +3046,7 @@
         }
 
         async function viewOpsPO(id) {
-            const token = sessionStorage.getItem('authToken');
+            const token = localStorage.getItem('authToken');
             try {
                 const res = await fetch(`/api/purchase-orders/${id}`, {
                     headers: { 'Authorization': `Bearer ${token}` }
@@ -3074,7 +3103,7 @@
         }
 
         async function loadOpsPerformance() {
-            const token = sessionStorage.getItem('authToken');
+            const token = localStorage.getItem('authToken');
             
             // Ensure branches are loaded so the filter dropdown is populated
             if (allBranches.length === 0) {
@@ -3248,7 +3277,7 @@
         }
 
         async function loadStrategy() {
-            const token = sessionStorage.getItem('authToken');
+            const token = localStorage.getItem('authToken');
             const selectedBranch = document.getElementById('globalBranchFilter').value;
 
             // Set loading states
@@ -3346,7 +3375,7 @@
                 return;
             }
 
-            const token = sessionStorage.getItem('authToken');
+            const token = localStorage.getItem('authToken');
             try {
                 const res = await fetch('/api/users', {
                     method: 'POST',
@@ -3398,13 +3427,18 @@
         
         function closeBranchModal() { document.getElementById('branchModal').classList.remove('active'); }
         
-        async function saveBranch() {
+        async function saveBranch(btnElement) {
             const id = document.getElementById('branchId').value;
             const name = document.getElementById('branchName').value;
             const location = document.getElementById('branchLocation').value;
             const vat = document.getElementById('branchVat').value;
             
-            const token = sessionStorage.getItem('authToken');
+            if(btnElement) {
+                btnElement.disabled = true;
+                btnElement.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Saving...';
+            }
+
+            const token = localStorage.getItem('authToken');
             const url = id ? `/api/branches/${id}` : '/api/branches';
             const method = id ? 'PUT' : 'POST';
             
@@ -3422,7 +3456,15 @@
                 } else {
                     alert("Error saving branch");
                 }
-            } catch(e) { console.error(e); alert("Server error"); }
+            } catch(e) { 
+                console.error(e); 
+                alert("Server error"); 
+            } finally {
+                if(btnElement) {
+                    btnElement.disabled = false;
+                    btnElement.innerHTML = 'Save Branch';
+                }
+            }
         }
 
         function openTargetModal() {
@@ -3440,7 +3482,7 @@
             const target = document.getElementById('newTargetInput').value;
             if (!target) return alert("Please enter a target amount");
 
-            const token = sessionStorage.getItem('authToken');
+            const token = localStorage.getItem('authToken');
             try {
                 const res = await fetch('/api/ceo/target', {
                     method: 'POST',
@@ -3483,7 +3525,7 @@
                 return;
             }
 
-            const token = sessionStorage.getItem('authToken');
+            const token = localStorage.getItem('authToken');
             try {
                 const res = await fetch('/api/update-password', {
                     method: 'POST',
@@ -3509,7 +3551,7 @@
         }
 
         async function logout() {
-            const token = sessionStorage.getItem('authToken');
+            const token = localStorage.getItem('authToken');
             await fetch('/api/logout', { method: 'POST', headers: { 'Authorization': `Bearer ${token}` }});
             window.location.href = '/login';
         }
@@ -3638,7 +3680,7 @@
         async function loadTaxes() {
             const list = document.getElementById('taxList');
             try {
-                const token = sessionStorage.getItem('authToken');
+                const token = localStorage.getItem('authToken');
                 
                 // Fetch both taxes and settings (for System VAT)
                 const [taxesRes, settingsRes] = await Promise.all([
@@ -3697,7 +3739,7 @@
             e.preventDefault();
             const name = document.getElementById('newTaxName').value;
             const rate = document.getElementById('newTaxRate').value;
-            const token = sessionStorage.getItem('authToken');
+            const token = localStorage.getItem('authToken');
 
             try {
                 const res = await fetch('/api/taxes', {
@@ -3717,7 +3759,7 @@
 
         async function deleteSystemVat() {
             if (!confirm('Are you sure you want to remove the System VAT?')) return;
-            const token = sessionStorage.getItem('authToken');
+            const token = localStorage.getItem('authToken');
             try {
                 const res = await fetch('/api/settings/vat', { method: 'DELETE', headers: { 'Authorization': `Bearer ${token}` } });
                 if (res.ok) { 
@@ -3733,7 +3775,7 @@
                 'Remove Tax Rule?',
                 'Are you sure you want to remove this tax rule permanently?',
                 async () => {
-                    const token = sessionStorage.getItem('authToken');
+                    const token = localStorage.getItem('authToken');
                     try {
                         const res = await fetch(`/api/taxes/${id}`, { method: 'DELETE', headers: { 'Authorization': `Bearer ${token}` } });
                         if (res.ok) {
@@ -3751,7 +3793,7 @@
             const start = document.getElementById('reportStart').value;
             const end = document.getElementById('reportEnd').value;
             const branch = document.getElementById('reportBranch').value;
-            const token = sessionStorage.getItem('authToken');
+            const token = localStorage.getItem('authToken');
             
             const tbody = document.getElementById('reportTableBody');
             const theadRow = document.querySelector('#reportTable thead tr');
