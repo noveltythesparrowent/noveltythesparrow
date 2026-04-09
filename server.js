@@ -1705,37 +1705,57 @@ app.get('/api/dashboard', authenticateToken, async (req, res) => {
         // Low Stock (stock > 0 AND stock <= reorder_level — excludes out-of-stock items)
         let stockCount = 0;
         if (storeLocation) {
-            // Generic branch lookup — fetch BOTH name and location from the branches table.
-            // stock_levels keys may be stored under either the branch name or location,
-            // so we include both to ensure any branch works without hardcoding.
+            // Generic branch lookup — fetch BOTH name and location from branches table
+            // stock_levels keys may be stored under the branch name, location, or a historical variant
             const branchLookup = await pool.query(
                 'SELECT name, location FROM branches WHERE name = $1 OR location = $1 LIMIT 1',
                 [storeLocation]
             );
             const branchRow = branchLookup.rows[0];
 
-            // Build comprehensive alias set: user store_location + canonical name + canonical location
-            // This generic approach works for ALL branches with no special-casing needed
+            // Build comprehensive alias set from all known variants
             const aliases = new Set(
                 [storeLocation, branchRow?.name, branchRow?.location].filter(Boolean)
             );
 
-            // Build the SQL expression that sums stock across ALL known key aliases
-            const branchStockSQL = [...aliases]
-                .map(alias => `COALESCE((stock_levels->>'${alias.replace(/'/g, "''")}')::int, 0)`)
-                .join(' + ');
-
-            // Count only items with stock > 0 AND <= reorder_level (genuinely LOW, not OUT OF STOCK)
-            const stockRes = await pool.query(
-                `SELECT COUNT(*) as count FROM products 
-                 WHERE (${branchStockSQL}) > 0 
-                   AND (${branchStockSQL}) <= COALESCE(reorder_level, 10) 
-                   AND tenant_id = $1`,
+            // Fetch all products (lightweight — only fields needed for the count)
+            const productsRes = await pool.query(
+                'SELECT stock_levels, reorder_level FROM products WHERE tenant_id = $1',
                 [req.user.tenant_id]
             );
-            stockCount = parseInt(stockRes.rows[0].count);
+
+            // Fallback: scan actual stock_levels keys to auto-detect any variant not in the branches table
+            // Checks if a product key is a substring of any alias or vice versa
+            for (const product of productsRes.rows.slice(0, 30)) {
+                const levels = typeof product.stock_levels === 'string'
+                    ? JSON.parse(product.stock_levels || '{}')
+                    : (product.stock_levels || {});
+                for (const key of Object.keys(levels)) {
+                    const keyLower = key.toLowerCase();
+                    for (const alias of aliases) {
+                        if (alias && key.length > 2 &&
+                            (keyLower.includes(alias.toLowerCase()) || alias.toLowerCase().includes(keyLower))) {
+                            aliases.add(key);
+                            break;
+                        }
+                    }
+                }
+            }
+
+            // Count products that are genuinely low stock for this branch
+            for (const product of productsRes.rows) {
+                const levels = typeof product.stock_levels === 'string'
+                    ? JSON.parse(product.stock_levels || '{}')
+                    : (product.stock_levels || {});
+                let branchStock = 0;
+                for (const alias of aliases) {
+                    branchStock += parseInt(levels[alias]) || 0;
+                }
+                const reorder = product.reorder_level ?? 10;
+                if (branchStock > 0 && branchStock <= reorder) stockCount++;
+            }
         } else {
-            // Admin/CEO global view — sum total stock across all branches
+            // Admin/CEO global view — sum total stock across all branches per product
             const stockRes = await pool.query(
                 `SELECT COUNT(*) as count FROM products 
                  WHERE COALESCE((
@@ -2273,7 +2293,11 @@ app.get('/api/products/full', authenticateToken, async (req, res) => {
         // Support Pagination & Search parameters
         const page = Math.max(1, parseInt(req.query.page) || 1);
         const limitParam = req.query.limit;
-        const limit = limitParam === 'all' ? null : Math.max(1, parseInt(limitParam) || 20);
+        const lowStockOnly = req.query.lowStock === 'true';
+        // When filtering for low stock, we MUST fetch ALL products first (no DB-level pagination)
+        // because low-stock items may be on any page and we can only filter after computing branch stock
+        const limit = (lowStockOnly || limitParam === 'all') ? null : Math.max(1, parseInt(limitParam) || 20);
+        const requestedLimit = limitParam === 'all' ? null : Math.max(1, parseInt(limitParam) || 20);
         const offset = limit ? (page - 1) * limit : 0;
         const search = req.query.search ? req.query.search.trim() : null;
 
@@ -2293,7 +2317,7 @@ app.get('/api/products/full', authenticateToken, async (req, res) => {
             limitClause += ` OFFSET $${queryParams.length}`;
         }
 
-        // Execute Paginated Fetch with Global ROW Count computation
+        // Execute Fetch — no LIMIT when lowStock=true so we get all products to filter
         const result = await pool.query(`
             SELECT 
                 *,
@@ -2311,9 +2335,8 @@ app.get('/api/products/full', authenticateToken, async (req, res) => {
             ${limitClause}
         `, queryParams);
 
-        // Extract total_count safely from the first row window function
+        // Extract total_count from window function
         const totalItems = result.rows.length > 0 ? parseInt(result.rows[0].total_count) : 0;
-        const totalPages = limit ? Math.ceil(totalItems / limit) : 1;
 
         // Map branch name for stock lookup (match how stock_levels keys are stored)
         // Query BOTH name and location from branches — keys may be stored under either field
@@ -2324,11 +2347,32 @@ app.get('/api/products/full', authenticateToken, async (req, res) => {
         const branchRow = branchRes.rows[0];
         const branchStockKey = branchRow?.name || userBranch;
 
-        // Generic alias set: includes userBranch, canonical name, AND canonical location
-        // No hardcoded branch names — works for any branch automatically
+        // Build generic alias set: userBranch + canonical name + canonical location
+        // This covers all known key variants without hardcoding branch names
         const branchKeySet = new Set(
             [userBranch, branchStockKey, branchRow?.location].filter(Boolean)
         );
+
+        // Fallback: scan actual stock_levels keys in the data to auto-detect the right key
+        // This handles cases where the branches table doesn't match or keys were saved differently
+        if (result.rows.length > 0) {
+            const sampleRows = result.rows.slice(0, Math.min(20, result.rows.length));
+            for (const p of sampleRows) {
+                const levels = typeof p.stock_levels === 'string'
+                    ? JSON.parse(p.stock_levels || '{}')
+                    : (p.stock_levels || {});
+                for (const key of Object.keys(levels)) {
+                    // Match if any alias is a substring of the key or vice versa
+                    const keyLower = key.toLowerCase();
+                    for (const alias of branchKeySet) {
+                        if (alias && (keyLower.includes(alias.toLowerCase()) || alias.toLowerCase().includes(keyLower))) {
+                            if (key.length > 2) branchKeySet.add(key); // avoid matching tiny keys
+                            break;
+                        }
+                    }
+                }
+            }
+        }
 
         const rows = result.rows.map(p => {
             const levels = p.stock_levels || {};
@@ -2356,14 +2400,14 @@ app.get('/api/products/full', authenticateToken, async (req, res) => {
             return p;
         });
 
-        // Apply lowStock filter AFTER branch stock is resolved per-product
-        // Only items with 0 < stock <= reorder_level qualify as "low stock"
-        const lowStockOnly = req.query.lowStock === 'true';
+        // Apply lowStock filter AFTER branch stock is resolved for ALL products
+        // Then re-apply pagination to the filtered set
         let finalRows = rows;
         let finalTotal = totalItems;
 
         if (lowStockOnly) {
-            finalRows = rows.filter(p => {
+            // Filter for genuinely low stock: 0 < branch_stock <= reorder_level
+            const allLowStock = rows.filter(p => {
                 const s = (p.stock_for_branch !== undefined && p.stock_for_branch !== null)
                     ? p.stock_for_branch
                     : (p.stock || 0);
@@ -2372,7 +2416,10 @@ app.get('/api/products/full', authenticateToken, async (req, res) => {
                     : 10;
                 return s > 0 && s <= reorder;
             });
-            finalTotal = finalRows.length;
+            finalTotal = allLowStock.length;
+            // Re-paginate the filtered results
+            const startIdx = (page - 1) * (requestedLimit || finalTotal);
+            finalRows = requestedLimit ? allLowStock.slice(startIdx, startIdx + requestedLimit) : allLowStock;
         }
 
         // Set header with branch key for frontend reference
@@ -2380,7 +2427,7 @@ app.get('/api/products/full', authenticateToken, async (req, res) => {
         
         // Pass Pagination Meta Data via Headers (filtered counts when lowStock=true)
         res.setHeader('X-Total-Count', finalTotal);
-        res.setHeader('X-Total-Pages', limit ? Math.ceil(finalTotal / limit) : 1);
+        res.setHeader('X-Total-Pages', requestedLimit ? Math.ceil(finalTotal / requestedLimit) : 1);
         res.setHeader('X-Current-Page', page);
 
         await logActivity(req, 'VIEW_INVENTORY_LIST');
