@@ -2880,10 +2880,16 @@ app.put('/api/products/:id', authenticateToken, async (req, res) => {
 
 app.delete('/products/:barcode', authenticateToken, async (req, res) => {
     try {
-        const productRes = await pool.query('SELECT name FROM products WHERE barcode = $1 AND tenant_id = $2', [req.params.barcode, req.user.tenant_id]);
+        const tenantId = req.user.tenant_id || 1;
+        const productRes = await pool.query('SELECT name FROM products WHERE barcode = $1 AND tenant_id = $2', [req.params.barcode, tenantId]);
         const productName = productRes.rows[0]?.name || 'Unknown';
 
-        await pool.query('DELETE FROM products WHERE barcode = $1 AND tenant_id = $2', [req.params.barcode, req.user.tenant_id]);
+        const deleteRes = await pool.query('DELETE FROM products WHERE barcode = $1 AND tenant_id = $2', [req.params.barcode, tenantId]);
+        
+        if (deleteRes.rowCount === 0) {
+            return res.status(404).json({ message: 'Product not found or unauthorized' });
+        }
+        
         await logActivity(req, 'DELETE_PRODUCT', { barcode: req.params.barcode, name: productName });
         res.json({ success: true });
     } catch (err) {
@@ -2895,10 +2901,16 @@ app.delete('/products/:barcode', authenticateToken, async (req, res) => {
 // new API prefix delete route for front-end compatibility
 app.delete('/api/products/:barcode', authenticateToken, async (req, res) => {
     try {
-        const productRes = await pool.query('SELECT name FROM products WHERE barcode = $1 AND tenant_id = $2', [req.params.barcode, req.user.tenant_id]);
+        const tenantId = req.user.tenant_id || 1;
+        const productRes = await pool.query('SELECT name FROM products WHERE barcode = $1 AND tenant_id = $2', [req.params.barcode, tenantId]);
         const productName = productRes.rows[0]?.name || 'Unknown';
 
-        await pool.query('DELETE FROM products WHERE barcode = $1 AND tenant_id = $2', [req.params.barcode, req.user.tenant_id]);
+        const deleteRes = await pool.query('DELETE FROM products WHERE barcode = $1 AND tenant_id = $2', [req.params.barcode, tenantId]);
+        
+        if (deleteRes.rowCount === 0) {
+            return res.status(404).json({ message: 'Product not found or unauthorized' });
+        }
+        
         await logActivity(req, 'DELETE_PRODUCT', { barcode: req.params.barcode, name: productName });
         res.json({ success: true });
     } catch (err) {

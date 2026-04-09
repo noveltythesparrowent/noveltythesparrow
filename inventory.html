@@ -2416,7 +2416,7 @@
                     for (const chk of checkboxes) {
                         const barcode = chk.value;
                         try {
-                            const res = await fetch(`/api/products/${barcode}`, { 
+                            const res = await fetch(`/api/products/${encodeURIComponent(barcode)}`, { 
                                 method: 'DELETE',
                                 headers: { 'Authorization': `Bearer ${token}` }
                             });
