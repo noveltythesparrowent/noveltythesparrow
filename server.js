@@ -1702,23 +1702,41 @@ app.get('/api/dashboard', authenticateToken, async (req, res) => {
             queryParams
         );
 
-        // Low Stock (stock > 0 AND stock <= reorder_level — excludes out-of-stock items which are a separate concern)
+        // Low Stock (stock > 0 AND stock <= reorder_level — excludes out-of-stock items)
         let stockCount = 0;
         if (storeLocation) {
-            // Aggregate branch stock keys dynamically via SQL to heal fragmented renaming
-            let branchStockSQL = `(COALESCE(stock_levels->>$1, '0'))::int`;
-            
-            if (storeLocation.toLowerCase().includes('dzorwulu')) {
-                branchStockSQL += ` + (COALESCE(stock_levels->>'Dzorwulu', '0'))::int + (COALESCE(stock_levels->>'DZORWULU', '0'))::int`;
+            // Look up the canonical branch name from the branches table (same logic as /api/products/full)
+            // This ensures we check the exact key used in stock_levels JSONB column
+            const branchLookup = await pool.query(
+                'SELECT id, name FROM branches WHERE name = $1 OR location = $1 LIMIT 1',
+                [storeLocation]
+            );
+            const branchStockKey = branchLookup.rows[0]?.name || storeLocation;
+
+            // Aggregate all known aliases for this branch to handle historic key fragmentation
+            const aliases = new Set([storeLocation, branchStockKey]);
+            if (storeLocation.toLowerCase().includes('dzorwulu') || branchStockKey.toLowerCase().includes('dzorwulu')) {
+                aliases.add('Dzorwulu');
+                aliases.add('DZORWULU');
+                aliases.add('Novelty The Sparrow Ent Dzorwulu');
             }
-            if (storeLocation.toLowerCase().includes('lakeside')) {
-                branchStockSQL += ` + (COALESCE(stock_levels->>'Lakeside', '0'))::int + (COALESCE(stock_levels->>'LAKESIDE', '0'))::int`;
+            if (storeLocation.toLowerCase().includes('lakeside') || branchStockKey.toLowerCase().includes('lakeside')) {
+                aliases.add('Lakeside');
+                aliases.add('LAKESIDE');
             }
+
+            // Build the SQL expression that sums stock across ALL known key aliases
+            const branchStockSQL = [...aliases]
+                .map(alias => `COALESCE((stock_levels->>'${alias.replace(/'/g, "''")}')::int, 0)`)
+                .join(' + ');
 
             // Count only items with stock > 0 AND <= reorder_level (genuinely LOW, not OUT OF STOCK)
             const stockRes = await pool.query(
-                `SELECT COUNT(*) as count FROM products WHERE (${branchStockSQL}) > 0 AND (${branchStockSQL}) <= COALESCE(reorder_level, 10) AND tenant_id = $2`,
-                [storeLocation, req.user.tenant_id]
+                `SELECT COUNT(*) as count FROM products 
+                 WHERE (${branchStockSQL}) > 0 
+                   AND (${branchStockSQL}) <= COALESCE(reorder_level, 10) 
+                   AND tenant_id = $1`,
+                [req.user.tenant_id]
             );
             stockCount = parseInt(stockRes.rows[0].count);
         } else {
