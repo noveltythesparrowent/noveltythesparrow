@@ -2881,16 +2881,46 @@ app.put('/api/products/:id', authenticateToken, async (req, res) => {
 app.delete('/products/:barcode', authenticateToken, async (req, res) => {
     try {
         const tenantId = req.user.tenant_id || 1;
-        const productRes = await pool.query('SELECT name FROM products WHERE (barcode = $1 OR id::text = $1) AND tenant_id = $2', [req.params.barcode, tenantId]);
-        const productName = productRes.rows[0]?.name || 'Unknown';
+        const userBranch = req.user.store_location;
+        const isGlobalAdmin = req.user.role === 'admin' || req.user.role === 'ceo';
 
-        const deleteRes = await pool.query('DELETE FROM products WHERE (barcode = $1 OR id::text = $1) AND tenant_id = $2', [req.params.barcode, tenantId]);
-        
-        if (deleteRes.rowCount === 0) {
+        const productRes = await pool.query('SELECT name, stock_levels, stock FROM products WHERE (barcode = $1 OR id::text = $1) AND tenant_id = $2', [req.params.barcode, tenantId]);
+        if (productRes.rows.length === 0) {
             return res.status(404).json({ message: 'Product not found or unauthorized' });
         }
         
-        await logActivity(req, 'DELETE_PRODUCT', { identifier: req.params.barcode, name: productName });
+        const product = productRes.rows[0];
+        const productName = product.name || 'Unknown';
+
+        if (isGlobalAdmin) {
+            // Admins wipe the entire product globally
+            await pool.query('DELETE FROM products WHERE (barcode = $1 OR id::text = $1) AND tenant_id = $2', [req.params.barcode, tenantId]);
+            await logActivity(req, 'DELETE_PRODUCT_GLOBAL', { identifier: req.params.barcode, name: productName });
+        } else {
+             // Branch Managers ONLY remove their isolated branch stock keys
+             let levels = typeof product.stock_levels === 'string' ? JSON.parse(product.stock_levels || '{}') : (product.stock_levels || {});
+             
+             const branchRes = await pool.query('SELECT name, location FROM branches WHERE name = $1 OR location = $1', [userBranch]);
+             const branchRow = branchRes.rows[0] || {};
+             const branchKeySet = new Set([userBranch, branchRow.name, branchRow.location].filter(Boolean));
+             
+             let branchStockDeduction = 0;
+             const newLevels = { ...levels };
+             for (const key of branchKeySet) {
+                 if (newLevels[key] !== undefined) {
+                     branchStockDeduction += parseInt(newLevels[key]) || 0;
+                     delete newLevels[key];
+                 }
+             }
+
+             await pool.query(`
+                 UPDATE products 
+                 SET stock_levels = $1, stock = COALESCE(stock, 0) - $2
+                 WHERE (barcode = $3 OR id::text = $3) AND tenant_id = $4
+             `, [JSON.stringify(newLevels), branchStockDeduction, req.params.barcode, tenantId]);
+
+             await logActivity(req, 'DELETE_PRODUCT_LOCAL_BRANCH', { identifier: req.params.barcode, branch: userBranch, deductedStock: branchStockDeduction });
+        }
         res.json({ success: true });
     } catch (err) {
         console.error(err);
@@ -2902,16 +2932,46 @@ app.delete('/products/:barcode', authenticateToken, async (req, res) => {
 app.delete('/api/products/:barcode', authenticateToken, async (req, res) => {
     try {
         const tenantId = req.user.tenant_id || 1;
-        const productRes = await pool.query('SELECT name FROM products WHERE (barcode = $1 OR id::text = $1) AND tenant_id = $2', [req.params.barcode, tenantId]);
-        const productName = productRes.rows[0]?.name || 'Unknown';
+        const userBranch = req.user.store_location;
+        const isGlobalAdmin = req.user.role === 'admin' || req.user.role === 'ceo';
 
-        const deleteRes = await pool.query('DELETE FROM products WHERE (barcode = $1 OR id::text = $1) AND tenant_id = $2', [req.params.barcode, tenantId]);
-        
-        if (deleteRes.rowCount === 0) {
+        const productRes = await pool.query('SELECT name, stock_levels, stock FROM products WHERE (barcode = $1 OR id::text = $1) AND tenant_id = $2', [req.params.barcode, tenantId]);
+        if (productRes.rows.length === 0) {
             return res.status(404).json({ message: 'Product not found or unauthorized' });
         }
         
-        await logActivity(req, 'DELETE_PRODUCT', { identifier: req.params.barcode, name: productName });
+        const product = productRes.rows[0];
+        const productName = product.name || 'Unknown';
+
+        if (isGlobalAdmin) {
+            // Admins wipe the entire product globally
+            await pool.query('DELETE FROM products WHERE (barcode = $1 OR id::text = $1) AND tenant_id = $2', [req.params.barcode, tenantId]);
+            await logActivity(req, 'DELETE_PRODUCT_GLOBAL', { identifier: req.params.barcode, name: productName });
+        } else {
+             // Branch Managers ONLY remove their isolated branch stock keys
+             let levels = typeof product.stock_levels === 'string' ? JSON.parse(product.stock_levels || '{}') : (product.stock_levels || {});
+             
+             const branchRes = await pool.query('SELECT name, location FROM branches WHERE name = $1 OR location = $1', [userBranch]);
+             const branchRow = branchRes.rows[0] || {};
+             const branchKeySet = new Set([userBranch, branchRow.name, branchRow.location].filter(Boolean));
+             
+             let branchStockDeduction = 0;
+             const newLevels = { ...levels };
+             for (const key of branchKeySet) {
+                 if (newLevels[key] !== undefined) {
+                     branchStockDeduction += parseInt(newLevels[key]) || 0;
+                     delete newLevels[key];
+                 }
+             }
+
+             await pool.query(`
+                 UPDATE products 
+                 SET stock_levels = $1, stock = COALESCE(stock, 0) - $2
+                 WHERE (barcode = $3 OR id::text = $3) AND tenant_id = $4
+             `, [JSON.stringify(newLevels), branchStockDeduction, req.params.barcode, tenantId]);
+
+             await logActivity(req, 'DELETE_PRODUCT_LOCAL_BRANCH', { identifier: req.params.barcode, branch: userBranch, deductedStock: branchStockDeduction });
+        }
         res.json({ success: true });
     } catch (err) {
         console.error(err);
