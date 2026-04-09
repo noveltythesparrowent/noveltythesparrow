@@ -1705,25 +1705,20 @@ app.get('/api/dashboard', authenticateToken, async (req, res) => {
         // Low Stock (stock > 0 AND stock <= reorder_level — excludes out-of-stock items)
         let stockCount = 0;
         if (storeLocation) {
-            // Look up the canonical branch name from the branches table (same logic as /api/products/full)
-            // This ensures we check the exact key used in stock_levels JSONB column
+            // Generic branch lookup — fetch BOTH name and location from the branches table.
+            // stock_levels keys may be stored under either the branch name or location,
+            // so we include both to ensure any branch works without hardcoding.
             const branchLookup = await pool.query(
-                'SELECT id, name FROM branches WHERE name = $1 OR location = $1 LIMIT 1',
+                'SELECT name, location FROM branches WHERE name = $1 OR location = $1 LIMIT 1',
                 [storeLocation]
             );
-            const branchStockKey = branchLookup.rows[0]?.name || storeLocation;
+            const branchRow = branchLookup.rows[0];
 
-            // Aggregate all known aliases for this branch to handle historic key fragmentation
-            const aliases = new Set([storeLocation, branchStockKey]);
-            if (storeLocation.toLowerCase().includes('dzorwulu') || branchStockKey.toLowerCase().includes('dzorwulu')) {
-                aliases.add('Dzorwulu');
-                aliases.add('DZORWULU');
-                aliases.add('Novelty The Sparrow Ent Dzorwulu');
-            }
-            if (storeLocation.toLowerCase().includes('lakeside') || branchStockKey.toLowerCase().includes('lakeside')) {
-                aliases.add('Lakeside');
-                aliases.add('LAKESIDE');
-            }
+            // Build comprehensive alias set: user store_location + canonical name + canonical location
+            // This generic approach works for ALL branches with no special-casing needed
+            const aliases = new Set(
+                [storeLocation, branchRow?.name, branchRow?.location].filter(Boolean)
+            );
 
             // Build the SQL expression that sums stock across ALL known key aliases
             const branchStockSQL = [...aliases]
@@ -1740,9 +1735,18 @@ app.get('/api/dashboard', authenticateToken, async (req, res) => {
             );
             stockCount = parseInt(stockRes.rows[0].count);
         } else {
-            // Global stock check — only genuinely low (not zero)
+            // Admin/CEO global view — sum total stock across all branches
             const stockRes = await pool.query(
-                "SELECT COUNT(*) as count FROM products WHERE COALESCE(stock, 0) > 0 AND COALESCE(stock, 0) <= COALESCE(reorder_level, 10) AND tenant_id = $1",
+                `SELECT COUNT(*) as count FROM products 
+                 WHERE COALESCE((
+                     SELECT SUM(CAST(value AS INTEGER)) 
+                     FROM jsonb_each_text(COALESCE(stock_levels, '{}'))
+                 ), COALESCE(stock, 0)) > 0 
+                 AND COALESCE((
+                     SELECT SUM(CAST(value AS INTEGER)) 
+                     FROM jsonb_each_text(COALESCE(stock_levels, '{}'))
+                 ), COALESCE(stock, 0)) <= COALESCE(reorder_level, 10) 
+                 AND tenant_id = $1`,
                 [req.user.tenant_id]
             );
             stockCount = parseInt(stockRes.rows[0].count);
@@ -2312,32 +2316,27 @@ app.get('/api/products/full', authenticateToken, async (req, res) => {
         const totalPages = limit ? Math.ceil(totalItems / limit) : 1;
 
         // Map branch name for stock lookup (match how stock_levels keys are stored)
-        const branchRes = await pool.query('SELECT id, name, location FROM branches WHERE name = $1 OR location = $1', [userBranch]);
-        const branchStockKey = branchRes.rows[0]?.name || userBranch;
+        // Query BOTH name and location from branches — keys may be stored under either field
+        const branchRes = await pool.query(
+            'SELECT id, name, location FROM branches WHERE name = $1 OR location = $1',
+            [userBranch]
+        );
+        const branchRow = branchRes.rows[0];
+        const branchStockKey = branchRow?.name || userBranch;
+
+        // Generic alias set: includes userBranch, canonical name, AND canonical location
+        // No hardcoded branch names — works for any branch automatically
+        const branchKeySet = new Set(
+            [userBranch, branchStockKey, branchRow?.location].filter(Boolean)
+        );
 
         const rows = result.rows.map(p => {
             const levels = p.stock_levels || {};
             const levelsObj = typeof levels === 'string' ? JSON.parse(levels) : levels;
 
-            // Get branch-specific stock with flexible naming for Dzorwulu/Novelty
+            // Sum stock across ALL known key aliases for this branch
             let branchStock = 0;
-            const possibleKeys = new Set([branchStockKey, userBranch]);
-
-            if (userBranch !== 'Main Warehouse') { 
-                if (userBranch.toLowerCase().includes('dzorwulu')) {
-                    possibleKeys.add('Dzorwulu');
-                    possibleKeys.add('DZORWULU');
-                }
-                if (userBranch.toLowerCase().includes('lakeside')) {
-                    possibleKeys.add('Lakeside');
-                    possibleKeys.add('LAKESIDE');
-                }
-            } else {
-                possibleKeys.add('Main Warehouse');
-            }
-
-            // Safely sum all valid aliases (this effortlessly fixes stock fragmentation from branch renaming)
-            for (const key of possibleKeys) {
+            for (const key of branchKeySet) {
                 branchStock += parseInt(levelsObj[key]) || 0;
             }
 
