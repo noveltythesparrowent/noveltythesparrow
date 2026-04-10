@@ -299,6 +299,15 @@
                 </div>
                 <div class="stat-icon icon-products"><i class="fas fa-exclamation-triangle"></i></div>
             </div>
+            <div class="stat-card" onclick="window.location.href='inventory?tab=stock&outOfStock=true'">
+                <div class="stat-info">
+                    <h3 id="outOfStock" style="color: #c62828;">0</h3>
+                    <p>Out of Stock Items</p>
+                </div>
+                <div class="stat-icon" style="background: rgba(198, 40, 40, 0.1); color: #c62828;">
+                    <i class="fas fa-ban"></i>
+                </div>
+            </div>
         </div>
 
         <!-- Recent Transactions -->
@@ -496,18 +505,16 @@
             if (branch) {
                 document.querySelector('.header-title p').textContent = `Overview for: ${branch}`;
             }
-
             // Update stats cards
             document.getElementById('totalSales').textContent = `₵${stats.totalSales.toFixed(2)}`;
             document.getElementById('totalTxns').textContent = stats.totalTransactions;
             document.getElementById('lowStock').textContent = stats.lowStockCount;
+            document.getElementById('outOfStock').textContent = stats.outOfStockCount || 0;
 
-            // Show Low Stock Alert if needed and not dismissed
-            if (stats.lowStockCount > 0 && !localStorage.getItem('lowStockAlertDismissed')) {
-                const count = stats.lowStockCount;
-                const msg = count === 1 
-                    ? `Warning: There is <strong style="color: #c62828;">${count}</strong> item running low on stock.`
-                    : `Warning: There are <strong style="color: #c62828;">${count}</strong> items running low on stock.`;
+            // Show Low Stock / Out of Stock Alert if needed and not dismissed
+            const totalAlert = stats.lowStockCount + (stats.outOfStockCount || 0);
+            if (totalAlert > 0 && !localStorage.getItem('lowStockAlertDismissed')) {
+                const msg = `Warning: There are <strong style="color: #c62828;">${stats.outOfStockCount || 0}</strong> empty items and <strong style="color: #f57f17;">${stats.lowStockCount}</strong> low items.`;
                 document.getElementById('lowStockMsg').innerHTML = msg;
                 document.getElementById('lowStockModal').style.display = 'flex';
             }

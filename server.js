@@ -1702,8 +1702,10 @@ app.get('/api/dashboard', authenticateToken, async (req, res) => {
             queryParams
         );
 
-        // Low Stock (stock > 0 AND stock <= reorder_level — excludes out-of-stock items)
-        let stockCount = 0;
+        // Low & Out of Stock Logic
+        let lowStockCount = 0;
+        let outOfStockCount = 0;
+        
         if (storeLocation) {
             // Generic branch lookup — fetch BOTH name and location from branches table
             // stock_levels keys may be stored under the branch name, location, or a historical variant
@@ -1713,18 +1715,15 @@ app.get('/api/dashboard', authenticateToken, async (req, res) => {
             );
             const branchRow = branchLookup.rows[0];
 
-            // Build comprehensive alias set from all known variants
             const aliases = new Set(
                 [storeLocation, branchRow?.name, branchRow?.location].filter(Boolean)
             );
 
-            // Fetch all products (lightweight — only fields needed for the count)
             const productsRes = await pool.query(
                 'SELECT stock_levels, reorder_level FROM products WHERE tenant_id = $1',
                 [req.user.tenant_id]
             );
 
-            // Count products that are low stock or out of stock for this branch
             for (const product of productsRes.rows) {
                 const levels = typeof product.stock_levels === 'string'
                     ? JSON.parse(product.stock_levels || '{}')
@@ -1734,20 +1733,30 @@ app.get('/api/dashboard', authenticateToken, async (req, res) => {
                     branchStock += parseInt(levels[alias]) || 0;
                 }
                 const reorder = product.reorder_level ?? 10;
-                if (branchStock <= reorder) stockCount++;
+                if (branchStock <= 0) outOfStockCount++;
+                else if (branchStock <= reorder) lowStockCount++;
             }
         } else {
             // Admin/CEO global view — sum total stock across all branches per product
             const stockRes = await pool.query(
-                `SELECT COUNT(*) as count FROM products 
-                 WHERE COALESCE((
-                     SELECT SUM(CAST(value AS INTEGER)) 
-                     FROM jsonb_each_text(COALESCE(stock_levels, '{}'))
-                 ), COALESCE(stock, 0)) <= COALESCE(reorder_level, 10) 
-                 AND tenant_id = $1`,
+                `WITH BranchTotals AS (
+                    SELECT 
+                        COALESCE((
+                            SELECT SUM(CAST(value AS INTEGER)) 
+                            FROM jsonb_each_text(COALESCE(stock_levels, '{}'))
+                        ), COALESCE(stock, 0)) as total_stock,
+                        COALESCE(reorder_level, 10) as target_reorder
+                    FROM products 
+                    WHERE tenant_id = $1
+                 )
+                 SELECT 
+                    SUM(CASE WHEN total_stock <= 0 THEN 1 ELSE 0 END) as out_of_stock,
+                    SUM(CASE WHEN total_stock > 0 AND total_stock <= target_reorder THEN 1 ELSE 0 END) as low_stock
+                 FROM BranchTotals`,
                 [req.user.tenant_id]
             );
-            stockCount = parseInt(stockRes.rows[0].count);
+            outOfStockCount = parseInt(stockRes.rows[0].out_of_stock || 0);
+            lowStockCount = parseInt(stockRes.rows[0].low_stock || 0);
         }
 
         // Recent Transactions
@@ -1793,7 +1802,8 @@ app.get('/api/dashboard', authenticateToken, async (req, res) => {
             stats: {
                 totalSales: parseFloat(salesRes.rows[0].total),
                 totalTransactions: parseInt(txnsRes.rows[0].count),
-                lowStockCount: stockCount
+                lowStockCount: lowStockCount,
+                outOfStockCount: outOfStockCount
             },
             recentTransactions: recentRes.rows,
             cashierStats: cashierRes.rows,
@@ -2274,9 +2284,11 @@ app.get('/api/products/full', authenticateToken, async (req, res) => {
         const page = Math.max(1, parseInt(req.query.page) || 1);
         const limitParam = req.query.limit;
         const lowStockOnly = req.query.lowStock === 'true';
-        // When filtering for low stock, we MUST fetch ALL products first (no DB-level pagination)
+        const outOfStockOnly = req.query.outOfStock === 'true';
+        
+        // When filtering for stock, we MUST fetch ALL products first (no DB-level pagination)
         // because low-stock items may be on any page and we can only filter after computing branch stock
-        const limit = (lowStockOnly || limitParam === 'all') ? null : Math.max(1, parseInt(limitParam) || 20);
+        const limit = (lowStockOnly || outOfStockOnly || limitParam === 'all') ? null : Math.max(1, parseInt(limitParam) || 20);
         const requestedLimit = limitParam === 'all' ? null : Math.max(1, parseInt(limitParam) || 20);
         const offset = limit ? (page - 1) * limit : 0;
         const search = req.query.search ? req.query.search.trim() : null;
@@ -2364,21 +2376,27 @@ app.get('/api/products/full', authenticateToken, async (req, res) => {
         let finalRows = rows;
         let finalTotal = totalItems;
 
-        if (lowStockOnly) {
-            // Filter for low stock or out of stock (branch_stock <= reorder_level)
-            const allLowStock = rows.filter(p => {
+        if (lowStockOnly || outOfStockOnly) {
+            // Filter for either low stock (>0 and <=reorder) or out of stock (<=0)
+            const filteredSet = rows.filter(p => {
                 const s = (p.stock_for_branch !== undefined && p.stock_for_branch !== null)
                     ? p.stock_for_branch
                     : (p.stock || 0);
                 const reorder = (p.reorder_level !== null && p.reorder_level !== undefined)
                     ? p.reorder_level
                     : 10;
-                return s <= reorder;
+                
+                if (outOfStockOnly) {
+                    return s <= 0;
+                } else if (lowStockOnly) {
+                    return s > 0 && s <= reorder;
+                }
+                return true;
             });
-            finalTotal = allLowStock.length;
+            finalTotal = filteredSet.length;
             // Re-paginate the filtered results
             const startIdx = (page - 1) * (requestedLimit || finalTotal);
-            finalRows = requestedLimit ? allLowStock.slice(startIdx, startIdx + requestedLimit) : allLowStock;
+            finalRows = requestedLimit ? filteredSet.slice(startIdx, startIdx + requestedLimit) : filteredSet;
         }
 
         // Set header with branch key for frontend reference
