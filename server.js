@@ -3128,10 +3128,26 @@ app.post('/api/categories', authenticateToken, async (req, res) => {
     const { name, description } = req.body;
     const branchId = req.user.store_id;
     try {
+        // Restore if soft-deleted category with same name exists in this branch
+        const deletedRes = await pool.query(
+            'SELECT id FROM categories WHERE name = $1 AND branch_id = $2 AND tenant_id = $3 AND deleted_at IS NOT NULL LIMIT 1',
+            [name, branchId, req.user.tenant_id]
+        );
+        if (deletedRes.rows.length > 0) {
+            await pool.query(
+                'UPDATE categories SET description = $1, deleted_at = NULL WHERE id = $2 AND tenant_id = $3',
+                [description, deletedRes.rows[0].id, req.user.tenant_id]
+            );
+            await logActivity(req, 'RESTORE_CATEGORY', { name, branchId });
+            return res.json({ success: true, restored: true });
+        }
         await pool.query('INSERT INTO categories (name, description, branch_id, tenant_id) VALUES ($1, $2, $3, $4)', [name, description, branchId, req.user.tenant_id]);
         await logActivity(req, 'CREATE_CATEGORY', { name, branchId });
         res.json({ success: true });
-    } catch (err) { console.error(err); res.status(500).json({ message: 'Error creating category' }); }
+    } catch (err) {
+        if (err.code === '23505') return res.status(409).json({ message: `Category "${name}" already exists.` });
+        console.error(err); res.status(500).json({ message: 'Error creating category' });
+    }
 });
 
 app.delete('/api/categories/:id', authenticateToken, async (req, res) => {
@@ -3178,6 +3194,19 @@ app.post('/api/suppliers', authenticateToken, async (req, res) => {
     const { name, contact, phone, email, address } = req.body;
     const branchId = req.user.store_id;
     try {
+        // Restore if soft-deleted supplier with same name exists in this branch
+        const deletedRes = await pool.query(
+            'SELECT id FROM suppliers WHERE name = $1 AND branch_id = $2 AND tenant_id = $3 AND deleted_at IS NOT NULL LIMIT 1',
+            [name, branchId, req.user.tenant_id]
+        );
+        if (deletedRes.rows.length > 0) {
+            await pool.query(
+                'UPDATE suppliers SET contact_person=$1, phone=$2, email=$3, address=$4, deleted_at=NULL WHERE id=$5 AND tenant_id=$6',
+                [contact, phone, email, address, deletedRes.rows[0].id, req.user.tenant_id]
+            );
+            await logActivity(req, 'RESTORE_SUPPLIER', { name, branchId });
+            return res.json({ success: true, restored: true });
+        }
         await pool.query(
             'INSERT INTO suppliers (name, contact_person, phone, email, address, branch_id, tenant_id) VALUES ($1, $2, $3, $4, $5, $6, $7)',
             [name, contact, phone, email, address, branchId, req.user.tenant_id]
@@ -6138,7 +6167,6 @@ app.get('/api/customers', authenticateToken, async (req, res) => {
 app.post('/api/customers', authenticateToken, async (req, res) => {
     const { name, phone, email, creditLimit, status } = req.body;
     try {
-        // Verify creator exists (handles cases where DB was reset but token persists)
         const userCheck = await pool.query('SELECT id FROM users WHERE id = $1', [req.user.id]);
         if (userCheck.rows.length === 0) return res.status(401).json({ message: 'User session invalid. Please logout and login again.' });
 
@@ -6146,8 +6174,23 @@ app.post('/api/customers', authenticateToken, async (req, res) => {
 
         const limit = parseFloat(creditLimit) || 0;
 
+        // Restore if a soft-deleted customer with same phone exists
+        if (phone) {
+            const deletedRes = await pool.query(
+                'SELECT id, account_number FROM customers WHERE phone = $1 AND deleted_at IS NOT NULL LIMIT 1',
+                [phone]
+            );
+            if (deletedRes.rows.length > 0) {
+                await pool.query(
+                    'UPDATE customers SET name=$1, email=$2, credit_limit=$3, status=$4, deleted_at=NULL WHERE id=$5',
+                    [name, email, limit, status || 'Active', deletedRes.rows[0].id]
+                );
+                await logActivity(req, 'RESTORE_CUSTOMER', { name, accountNumber: deletedRes.rows[0].account_number });
+                return res.json({ success: true, restored: true, accountNumber: deletedRes.rows[0].account_number });
+            }
+        }
+
         // Generate 10-digit sequential account number
-        // Use MAX(account_number) to avoid duplicates when customers are deleted
         const maxRes = await pool.query("SELECT MAX(CAST(account_number AS BIGINT)) as max_acc FROM customers WHERE account_number ~ '^[0-9]+$'");
         const currentMax = maxRes.rows[0].max_acc ? parseInt(maxRes.rows[0].max_acc) : 1000000000;
         const accountNumber = String(currentMax + 1);
@@ -6995,10 +7038,24 @@ app.post('/api/taxes', authenticateToken, async (req, res) => {
     const { name, rate } = req.body;
     try {
         const branchId = req.user.store_id || 1;
+        // Restore if soft-deleted tax rule with same name exists for this branch
+        const deletedRes = await pool.query(
+            'SELECT id FROM tax_rules WHERE name = $1 AND branch_id = $2 AND deleted_at IS NOT NULL LIMIT 1',
+            [name, branchId]
+        );
+        if (deletedRes.rows.length > 0) {
+            await pool.query(
+                'UPDATE tax_rules SET rate = $1, deleted_at = NULL, status = $2 WHERE id = $3',
+                [rate, 'Active', deletedRes.rows[0].id]
+            );
+            await logActivity(req, 'RESTORE_TAX_RULE', { name, rate, branchId });
+            return res.json({ success: true, restored: true });
+        }
         await pool.query('INSERT INTO tax_rules (name, rate, branch_id) VALUES ($1, $2, $3)', [name, rate, branchId]);
         await logActivity(req, 'CREATE_TAX_RULE', { name, rate, branchId });
         res.json({ success: true });
     } catch (err) {
+        if (err.code === '23505') return res.status(409).json({ message: `Tax rule "${name}" already exists.` });
         console.error(err);
         res.status(500).json({ message: 'Error creating tax rule' });
     }
