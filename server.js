@@ -2014,9 +2014,26 @@ app.get('/api/promotions', authenticateToken, async (req, res) => {
 app.post('/api/promotions', authenticateToken, async (req, res) => {
     if (!req.user) return res.status(401).json({ message: 'Not authenticated' });
     const { code, discount } = req.body;
-    const branchId = req.user.store_id; // Capture the branch ID of the creator
+    const branchId = req.user.store_id;
 
     try {
+        // Check if a soft-deleted promotion with the same code exists for this tenant
+        const deletedRes = await pool.query(
+            'SELECT id FROM promotions WHERE code = $1 AND tenant_id = $2 AND deleted_at IS NOT NULL LIMIT 1',
+            [code, req.user.tenant_id]
+        );
+
+        if (deletedRes.rows.length > 0) {
+            // RESTORE: clear deleted_at and update discount/branch with new values
+            await pool.query(
+                'UPDATE promotions SET discount_percentage = $1, branch_id = $2, deleted_at = NULL WHERE code = $3 AND tenant_id = $4',
+                [discount, branchId, code, req.user.tenant_id]
+            );
+            await logActivity(req, 'RESTORE_PROMOTION', { code, discount, branchId });
+            return res.json({ success: true, restored: true });
+        }
+
+        // Fresh INSERT — no deleted record found for this code
         await pool.query(
             'INSERT INTO promotions (code, discount_percentage, branch_id, tenant_id) VALUES ($1, $2, $3, $4)',
             [code, discount, branchId, req.user.tenant_id]
@@ -2024,6 +2041,9 @@ app.post('/api/promotions', authenticateToken, async (req, res) => {
         await logActivity(req, 'CREATE_PROMOTION', { code, discount, branchId, tenantId: req.user.tenant_id });
         res.json({ success: true });
     } catch (err) {
+        if (err.code === '23505') {
+            return res.status(409).json({ message: `Promotion code "${code}" already exists and is active.` });
+        }
         console.error(err);
         res.status(500).json({ message: 'Error creating promotion' });
     }
