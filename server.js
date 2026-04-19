@@ -3020,45 +3020,61 @@ app.delete('/api/products/:barcode', authenticateToken, async (req, res) => {
     try {
         const tenantId = req.user.tenant_id || 1;
         const userBranch = req.user.store_location;
-        const isGlobalAdmin = req.user.role === 'admin' || req.user.role === 'ceo';
 
-        const productRes = await pool.query('SELECT name, stock_levels, stock FROM products WHERE (barcode = $1 OR id::text = $1) AND tenant_id = $2', [req.params.barcode, tenantId]);
+        const productRes = await pool.query(
+            'SELECT name, stock_levels, stock FROM products WHERE (barcode = $1 OR id::text = $1) AND tenant_id = $2 AND deleted_at IS NULL',
+            [req.params.barcode, tenantId]
+        );
         if (productRes.rows.length === 0) {
-            return res.status(404).json({ message: 'Product not found or unauthorized' });
+            return res.status(404).json({ message: 'Product not found or already deleted' });
         }
-        
+
         const product = productRes.rows[0];
         const productName = product.name || 'Unknown';
 
-        if (isGlobalAdmin) {
-            // Soft delete: product hidden globally but retained for 10-year compliance
-            await pool.query('UPDATE products SET deleted_at = NOW() WHERE (barcode = $1 OR id::text = $1) AND tenant_id = $2', [req.params.barcode, tenantId]);
-            await logActivity(req, 'SOFT_DELETE_PRODUCT_GLOBAL', { identifier: req.params.barcode, name: productName });
-        } else {
-             // Branch Managers ONLY remove their isolated branch stock keys
-             let levels = typeof product.stock_levels === 'string' ? JSON.parse(product.stock_levels || '{}') : (product.stock_levels || {});
-             
-             const branchRes = await pool.query('SELECT name, location FROM branches WHERE name = $1 OR location = $1', [userBranch]);
-             const branchRow = branchRes.rows[0] || {};
-             const branchKeySet = new Set([userBranch, branchRow.name, branchRow.location].filter(Boolean));
-             
-             let branchStockDeduction = 0;
-             const newLevels = { ...levels };
-             for (const key of branchKeySet) {
-                 if (newLevels[key] !== undefined) {
-                     branchStockDeduction += parseInt(newLevels[key]) || 0;
-                     delete newLevels[key];
-                 }
-             }
+        // Zero out this branch's stock from stock_levels before soft-deleting
+        if (userBranch) {
+            let levels = typeof product.stock_levels === 'string'
+                ? JSON.parse(product.stock_levels || '{}')
+                : (product.stock_levels || {});
 
-             await pool.query(`
-                 UPDATE products 
-                 SET stock_levels = $1, stock = COALESCE(stock, 0) - $2
-                 WHERE (barcode = $3 OR id::text = $3) AND tenant_id = $4
-             `, [JSON.stringify(newLevels), branchStockDeduction, req.params.barcode, tenantId]);
+            const branchRes = await pool.query(
+                'SELECT name, location FROM branches WHERE (name = $1 OR location = $1) AND deleted_at IS NULL',
+                [userBranch]
+            );
+            const branchRow = branchRes.rows[0] || {};
+            const branchKeySet = new Set([userBranch, branchRow.name, branchRow.location].filter(Boolean));
 
-             await logActivity(req, 'DELETE_PRODUCT_LOCAL_BRANCH', { identifier: req.params.barcode, branch: userBranch, deductedStock: branchStockDeduction });
+            let branchStockDeduction = 0;
+            const newLevels = { ...levels };
+            for (const key of branchKeySet) {
+                if (newLevels[key] !== undefined) {
+                    branchStockDeduction += parseInt(newLevels[key]) || 0;
+                    delete newLevels[key];
+                }
+            }
+
+            // Update stock_levels first to accurately record the deduction
+            await pool.query(`
+                UPDATE products
+                SET stock_levels = $1, stock = GREATEST(0, COALESCE(stock, 0) - $2)
+                WHERE (barcode = $3 OR id::text = $3) AND tenant_id = $4
+            `, [JSON.stringify(newLevels), branchStockDeduction, req.params.barcode, tenantId]);
         }
+
+        // Soft-delete globally so the product disappears from all views
+        await pool.query(
+            'UPDATE products SET deleted_at = NOW() WHERE (barcode = $1 OR id::text = $1) AND tenant_id = $2',
+            [req.params.barcode, tenantId]
+        );
+
+        await logActivity(req, 'SOFT_DELETE_PRODUCT', {
+            identifier: req.params.barcode,
+            name: productName,
+            branch: userBranch || 'Global',
+            role: req.user.role
+        });
+
         res.json({ success: true });
     } catch (err) {
         console.error(err);
