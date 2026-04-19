@@ -20,7 +20,8 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const nodemailer = require('nodemailer');
 const PDFDocument = require('pdfkit');
-const JWT_SECRET = process.env.JWT_SECRET || 'footprint-secure-secret-key-2025';
+const JWT_SECRET = process.env.JWT_SECRET;
+if (!JWT_SECRET) throw new Error('FATAL: JWT_SECRET environment variable is not set. Server cannot start.');
 const path = require('path');
 const axios = require('axios');
 const { v4: uuidv4 } = require('uuid');
@@ -334,10 +335,10 @@ async function initDb() {
             );
             
             -- Seed default branches if empty
-            INSERT INTO branches (id, name, location) VALUES (1, 'Novelty The Sparrow Ent', 'Dzorwulu') ON CONFLICT (id) DO NOTHING;
+            INSERT INTO branches (id, name, location) VALUES (1, 'Dzorwulu', 'Dzorwulu') ON CONFLICT (id) DO NOTHING;
             
             -- Force update legacy initializations
-            UPDATE branches SET name = 'Novelty The Sparrow Ent', location = 'Dzorwulu' WHERE id = 1 AND name = 'Main Warehouse';
+            UPDATE branches SET name = 'Dzorwulu', location = 'Dzorwulu' WHERE id = 1 AND name = 'Main Warehouse';
             -- No additional dummy branches will be forced into the database.
             -- FIX: Sync branches_id_seq with the actual max id to prevent duplicate key errors
             SELECT setval(pg_get_serial_sequence('branches', 'id'), COALESCE((SELECT MAX(id) FROM branches), 1));
@@ -382,16 +383,19 @@ async function initDb() {
                     ALTER TABLE products DROP CONSTRAINT IF EXISTS products_pkey CASCADE;
                     ALTER TABLE products DROP CONSTRAINT IF EXISTS products_barcode_name_key CASCADE;
                     
-                    -- Add new unique constraint on tenant_id+barcode+name if it doesn't exist
-                    IF NOT EXISTS (
-                        SELECT 1 FROM pg_constraint 
-                        WHERE conname = 'products_tenant_barcode_name_key'
-                    ) THEN
-                        ALTER TABLE products ADD CONSTRAINT products_tenant_barcode_name_key UNIQUE (tenant_id, barcode, name);
-                    END IF;
+                    -- Drop old hard constraint if it exists, replace with partial index
+                    -- Partial index allows re-adding a product after it has been soft-deleted
+                    ALTER TABLE products DROP CONSTRAINT IF EXISTS products_tenant_barcode_name_key CASCADE;
+                    ALTER TABLE products DROP CONSTRAINT IF EXISTS products_barcode_name_key CASCADE;
+                    -- Ensure deleted_at column exists BEFORE creating the partial index that references it
+                    ALTER TABLE products ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ DEFAULT NULL;
+                    -- Drop old index (may have wrong definition) and recreate with barcode+name
+                    DROP INDEX IF EXISTS products_barcode_active_idx;
+                    CREATE UNIQUE INDEX IF NOT EXISTS products_barcode_active_idx
+                        ON products(tenant_id, barcode, name) WHERE deleted_at IS NULL AND barcode IS NOT NULL AND barcode != '';
                 ELSE
-                    -- Skip constraint creation if duplicates exist - keep existing structure
-                    RAISE NOTICE 'Skipping unique constraint creation - % duplicate (barcode,name) pairs found', dup_count;
+                    -- Skip if duplicates exist - keep existing structure
+                    RAISE NOTICE 'Skipping unique index creation - % duplicate (barcode,name) pairs found', dup_count;
                 END IF;
             END $$;
 
@@ -713,6 +717,32 @@ async function initDb() {
             AND u.store_id IS NULL;
         `);
 
+        // --- SOFT DELETE MIGRATION (Data Retention Compliance) ---
+        // Records are never physically removed. deleted_at timestamp marks when they were "deleted".
+        await pool.query(`
+            ALTER TABLE users         ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
+            ALTER TABLE products      ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
+            ALTER TABLE categories    ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
+            ALTER TABLE suppliers     ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
+            ALTER TABLE customers     ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
+            ALTER TABLE branches      ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
+            ALTER TABLE tax_rules     ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
+            ALTER TABLE promotions    ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
+
+            -- Partial unique indexes: uniqueness ONLY enforced on active (non-deleted) records.
+            -- This allows re-creation of the same email/barcode/code after a soft delete.
+            CREATE UNIQUE INDEX IF NOT EXISTS users_email_active_idx
+                ON users(LOWER(email)) WHERE deleted_at IS NULL;
+            CREATE UNIQUE INDEX IF NOT EXISTS users_username_active_idx
+                ON users(username) WHERE deleted_at IS NULL AND username IS NOT NULL;
+            CREATE UNIQUE INDEX IF NOT EXISTS users_employee_id_active_idx
+                ON users(employee_id) WHERE deleted_at IS NULL AND employee_id IS NOT NULL;
+            CREATE UNIQUE INDEX IF NOT EXISTS promotions_code_tenant_active_idx
+                ON promotions(code, tenant_id) WHERE deleted_at IS NULL;
+            CREATE UNIQUE INDEX IF NOT EXISTS customers_account_number_active_idx
+                ON customers(account_number) WHERE deleted_at IS NULL AND account_number IS NOT NULL;
+        `);
+
         // --- ENHANCED INVENTORY TABLES (Fix for 500 Errors) ---
         await pool.query(`
             -- Shelf Management
@@ -1019,7 +1049,16 @@ console.log('initDb() called');
 
 // Security middleware
 app.use(security.securityHeaders);
-// app.use(security.limiter);
+app.use(security.limiter);
+
+// Tighter dedicated limiter for the login endpoint (10 attempts / 15 min per IP)
+const loginLimiter = require('express-rate-limit')({
+    windowMs: 15 * 60 * 1000,
+    max: 10,
+    message: { success: false, message: 'Too many login attempts. Please wait 15 minutes and try again.' },
+    standardHeaders: true,
+    legacyHeaders: false
+});
 
 // Session configuration
 const sessionConfig = {
@@ -1279,7 +1318,7 @@ app.post('/forgot-password', async (req, res) => {
 // Routes
 
 // Login Route
-app.post('/login', [
+app.post('/login', loginLimiter, [
     body('email').isEmail(),
     body('password').isLength({ min: 6 })
 ], security.validateInput, async (req, res) => {
@@ -1288,7 +1327,7 @@ app.post('/login', [
     try {
         // Find user by email with branch/store and tenant information (Case Insensitive)
         const userResult = await pool.query(
-            'SELECT id, name, email, password, role, store_id, store_location, status, tenant_id FROM users WHERE LOWER(email) = LOWER($1)',
+            'SELECT id, name, email, password, role, store_id, store_location, status, tenant_id FROM users WHERE LOWER(email) = LOWER($1) AND deleted_at IS NULL',
             [email]
         );
 
@@ -1336,7 +1375,7 @@ app.post('/login', [
         await logActivity(req, 'LOGIN', { email: user.email, role: user.role });
 
         // Generate JWT Token
-        const token = jwt.sign(req.session.user, JWT_SECRET, { expiresIn: '7d' });
+        const token = jwt.sign(req.session.user, JWT_SECRET, { expiresIn: '8h' });
 
         // Set redirect path based on role
         const userRole = user.role.toLowerCase();
@@ -1446,7 +1485,7 @@ app.post('/api/company/login', [
         };
 
         // Generate JWT Token
-        const token = jwt.sign(req.session.companyUser, JWT_SECRET, { expiresIn: '7d' });
+        const token = jwt.sign(req.session.companyUser, JWT_SECRET, { expiresIn: '8h' });
 
         res.json({
             success: true,
@@ -1498,11 +1537,12 @@ app.get('/api/users', authenticateToken, async (req, res) => {
             SELECT id, username, name as "fullName", employee_id as "employeeId", 
                    phone, email, role, store_location as store, status, created_at 
             FROM users 
+            WHERE deleted_at IS NULL
         `;
         const params = [];
 
         if (req.user.role !== 'admin' && req.user.role !== 'ceo' && req.user.store_location) {
-            query += ` WHERE store_location = $1`;
+            query += ` AND store_location = $1`;
             params.push(req.user.store_location);
         }
 
@@ -1597,27 +1637,15 @@ app.put('/api/users/:id', authenticateToken, async (req, res) => {
 app.delete('/api/users/:id', authenticateToken, async (req, res) => {
     const { id } = req.params;
     try {
-        await pool.query("DELETE FROM users WHERE id = $1", [id]);
-        await logActivity(req, 'DELETE_USER', { id });
-        res.json({ success: true, message: 'User permanently deleted' });
+        // Soft delete: mark as deleted, revoke access — record kept for data retention
+        await pool.query(
+            "UPDATE users SET deleted_at = NOW(), status = 'Deleted' WHERE id = $1",
+            [id]
+        );
+        await logActivity(req, 'SOFT_DELETE_USER', { id });
+        res.json({ success: true, message: 'User deactivated (data retained for compliance)' });
     } catch (err) {
         console.error(err);
-        if (err.code === '23503') {
-            // If cannot delete due to history, anonymize the user instead
-            const timestamp = Date.now();
-            const deletedEmail = `deleted_${id}_${timestamp}@void`;
-            const deletedUser = `del_${id}_${timestamp}`;
-
-            await pool.query(`
-                UPDATE users 
-                SET name = $1, username = $2, email = $3, phone = NULL, 
-                    employee_id = NULL, status = 'Deleted', password = $4
-                WHERE id = $5
-            `, [`Former Staff (${id})`, deletedUser, deletedEmail, crypto.randomBytes(16).toString('hex'), id]);
-            await logActivity(req, 'DELETE_USER_ANONYMIZED', { id });
-
-            return res.json({ success: true, message: 'User info cleared & access revoked (History preserved)' });
-        }
         res.status(500).json({ message: 'Error deleting user' });
     }
 });
@@ -1961,7 +1989,7 @@ app.get('/api/promotions', authenticateToken, async (req, res) => {
                 FROM promotions p
                 LEFT JOIN branches b ON p.branch_id = b.id
                 LEFT JOIN promotion_usage pu ON p.code = pu.promotion_code AND pu.branch_id = $1
-                WHERE p.tenant_id = $2 AND p.branch_id = $1
+                WHERE p.tenant_id = $2 AND p.branch_id = $1 AND p.deleted_at IS NULL
                 ORDER BY p.created_at DESC`;
             params.push(req.user.store_id, req.user.tenant_id);
         } else {
@@ -1970,7 +1998,7 @@ app.get('/api/promotions', authenticateToken, async (req, res) => {
                 SELECT p.*, COALESCE(b.name, 'Global') as branch_name 
                 FROM promotions p
                 LEFT JOIN branches b ON p.branch_id = b.id
-                WHERE p.tenant_id = $1
+                WHERE p.tenant_id = $1 AND p.deleted_at IS NULL
                 ORDER BY p.created_at DESC`;
             params.push(req.user.tenant_id);
         }
@@ -2004,12 +2032,12 @@ app.post('/api/promotions', authenticateToken, async (req, res) => {
 app.delete('/api/promotions/:code', authenticateToken, async (req, res) => {
     if (!req.user) return res.status(401).json({ message: 'Not authenticated' });
     try {
-        let query = 'DELETE FROM promotions WHERE code = $1 AND tenant_id = $2';
+        // Soft delete: hidden from frontend but kept for compliance
+        let query = 'UPDATE promotions SET deleted_at = NOW() WHERE code = $1 AND tenant_id = $2 AND deleted_at IS NULL';
         let params = [req.params.code, req.user.tenant_id];
 
-        // Ensure users can only delete promotions from their own branch (Strict Ownership)
         if (req.user.role !== 'admin' && req.user.role !== 'ceo' && req.user.store_id) {
-            query += ' AND branch_id = $3'; // Managers cannot delete Global promotions
+            query += ' AND branch_id = $3';
             params.push(req.user.store_id);
         }
 
@@ -2018,7 +2046,7 @@ app.delete('/api/promotions/:code', authenticateToken, async (req, res) => {
             return res.status(404).json({ message: 'Promotion not found or access denied' });
         }
 
-        await logActivity(req, 'DELETE_PROMOTION', { code: req.params.code });
+        await logActivity(req, 'SOFT_DELETE_PROMOTION', { code: req.params.code });
         res.json({ success: true });
     } catch (err) {
         console.error(err);
@@ -2028,7 +2056,7 @@ app.delete('/api/promotions/:code', authenticateToken, async (req, res) => {
 
 app.get('/api/promotions/validate/:code', authenticateToken, async (req, res) => {
     try {
-        let query = 'SELECT * FROM promotions WHERE code = $1 AND tenant_id = $2';
+        let query = 'SELECT * FROM promotions WHERE code = $1 AND tenant_id = $2 AND deleted_at IS NULL';
         let params = [req.params.code, req.user.tenant_id];
 
         // Validate branch applicability
@@ -2070,7 +2098,7 @@ app.get('/products', authenticateToken, async (req, res) => {
         const search = req.query.search ? req.query.search.trim() : null;
 
         let queryParams = [req.user.tenant_id];
-        let whereClause = `WHERE tenant_id = $1`;
+        let whereClause = `WHERE tenant_id = $1 AND deleted_at IS NULL`;
 
         if (search) {
             queryParams.push(`%${search}%`);
@@ -2107,14 +2135,15 @@ app.get('/products', authenticateToken, async (req, res) => {
         // Process rows - recalculate stock from stock_levels to keep in sync
         const rows = result.rows.map(p => {
             if (isRestricted && userBranch) {
-                // Branch View: Show only stock for this branch
+                // Branch View: Show only stock for this branch (dynamic — works for any branch name)
                 const levels = p.stock_levels || {};
                 const levelsObj = typeof levels === 'string' ? JSON.parse(levels) : levels;
                 let bStock = 0;
-                const poolKeys = new Set([userBranch]);
-                if (userBranch.toLowerCase().includes('dzorwulu')) { poolKeys.add('Dzorwulu'); poolKeys.add('DZORWULU'); }
-                if (userBranch.toLowerCase().includes('lakeside')) { poolKeys.add('Lakeside'); poolKeys.add('LAKESIDE'); }
-                for (const key of poolKeys) bStock += parseInt(levelsObj[key]) || 0;
+                for (const key of Object.keys(levelsObj)) {
+                    if (key.toLowerCase() === (userBranch || '').toLowerCase()) {
+                        bStock += parseInt(levelsObj[key]) || 0;
+                    }
+                }
                 p.stock = bStock;
             } else {
                 // Admin/CEO View: Show total stock
@@ -2162,7 +2191,7 @@ app.get('/api/products', authenticateToken, async (req, res) => {
         const search = req.query.search ? req.query.search.trim() : null;
 
         let queryParams = [req.user.tenant_id || 1];
-        let whereClause = `WHERE tenant_id = $1`;
+        let whereClause = `WHERE tenant_id = $1 AND deleted_at IS NULL`;
 
         if (search) {
             queryParams.push(`%${search}%`);
@@ -2200,10 +2229,11 @@ app.get('/api/products', authenticateToken, async (req, res) => {
                 const levels = p.stock_levels || {};
                 const levelsObj = typeof levels === 'string' ? JSON.parse(levels) : levels;
                 let bStock = 0;
-                const poolKeys = new Set([userBranch]);
-                if (userBranch.toLowerCase().includes('dzorwulu')) { poolKeys.add('Dzorwulu'); poolKeys.add('DZORWULU'); }
-                if (userBranch.toLowerCase().includes('lakeside')) { poolKeys.add('Lakeside'); poolKeys.add('LAKESIDE'); }
-                for (const key of poolKeys) bStock += parseInt(levelsObj[key]) || 0;
+                for (const key of Object.keys(levelsObj)) {
+                    if (key.toLowerCase() === (userBranch || '').toLowerCase()) {
+                        bStock += parseInt(levelsObj[key]) || 0;
+                    }
+                }
                 p.stock = bStock;
             } else {
                 if (p.stock_levels && typeof p.stock_levels === 'object') {
@@ -2270,7 +2300,7 @@ app.get('/api/products/full', authenticateToken, async (req, res) => {
 
         // Core mapping: Always link external company portals directly to the primary Dzorwulu warehouse
         if (req.user.role === 'business_client' || req.user.type === 'company') {
-            userBranch = 'Novelty The Sparrow Ent Dzorwulu';
+            userBranch = 'Dzorwulu';
         }
 
         // Ensure all products have stock_levels initialized
@@ -2294,7 +2324,7 @@ app.get('/api/products/full', authenticateToken, async (req, res) => {
         const search = req.query.search ? req.query.search.trim() : null;
 
         let queryParams = [req.user.tenant_id || 1];
-        let whereClause = `WHERE tenant_id = $1`;
+        let whereClause = `WHERE tenant_id = $1 AND deleted_at IS NULL`;
 
         if (search) {
             queryParams.push(`%${search}%`);
@@ -2428,6 +2458,33 @@ app.post('/api/products', authenticateToken, async (req, res) => {
         const stockValue = parseInt(stock) || 0;
         const stockLevels = JSON.stringify({ [userBranch]: stockValue });
 
+        // Check if a soft-deleted product with the same barcode+name already exists
+        const deletedRes = await pool.query(
+            `SELECT id FROM products WHERE barcode = $1 AND name = $2 AND tenant_id = $3 AND deleted_at IS NOT NULL LIMIT 1`,
+            [barcode, name, req.user.tenant_id]
+        );
+
+        if (deletedRes.rows.length > 0) {
+            // RESTORE: clear deleted_at and update all fields with the new values
+            const existingId = deletedRes.rows[0].id;
+            await pool.query(
+                `UPDATE products SET
+                    name = $1, category = $2, price = $3, stock = $4, stock_levels = $5,
+                    cost_price = $6, selling_unit = $7, packaging_unit = $8,
+                    conversion_rate = $9, reorder_level = $10,
+                    track_batch = $11, track_expiry = $12,
+                    deleted_at = NULL
+                 WHERE id = $13 AND tenant_id = $14`,
+                [name, category, price, stockValue, stockLevels,
+                 cost_price || 0, selling_unit || 'Unit', packaging_unit || 'Box',
+                 conversion_rate || 1, reorder_level || 10,
+                 track_batch, track_expiry, existingId, req.user.tenant_id]
+            );
+            await logActivity(req, 'RESTORE_PRODUCT', { barcode, name, stock });
+            return res.json({ success: true, restored: true });
+        }
+
+        // Fresh INSERT — no deleted record found for this barcode
         await pool.query(
             `INSERT INTO products (barcode, name, category, price, stock, stock_levels, cost_price, selling_unit, packaging_unit, conversion_rate, reorder_level, track_batch, track_expiry, tenant_id) 
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
@@ -2436,9 +2493,7 @@ app.post('/api/products', authenticateToken, async (req, res) => {
 
         // Insert Batch if provided and stock > 0
         if (stockValue > 0 && (batch_number || expiry_date)) {
-            // Ensure batch number exists if expiry is provided
             const finalBatchNum = batch_number || `BATCH-${Date.now()}`;
-
             await pool.query(
                 `INSERT INTO product_batches (product_barcode, batch_number, expiry_date, quantity, quantity_available, quantity_received, branch_id, status)
                  VALUES ($1, $2, $3, $4, $4, $4, $5, 'Active')
@@ -2455,6 +2510,9 @@ app.post('/api/products', authenticateToken, async (req, res) => {
         await logActivity(req, 'CREATE_PRODUCT', { barcode, name, stock });
         res.json({ success: true });
     } catch (err) {
+        if (err.code === '23505' && err.constraint === 'products_barcode_active_idx') {
+            return res.status(409).json({ message: `A product named "${name}" with barcode "${barcode}" already exists. Use a different barcode/name combination or edit the existing product.` });
+        }
         console.error(err);
         res.status(500).json({ message: 'Error adding product' });
     }
@@ -2600,10 +2658,7 @@ app.post('/api/products/bulk', authenticateToken, upload.single('file'), async (
             raw: false
         });
 
-        console.log(`[BULK UPLOAD] File: ${req.file.originalname}, Rows: ${data.length}`);
-        if (data.length > 0) {
-            console.log('[BULK UPLOAD] First row columns:', Object.keys(data[0]));
-        }
+
 
         const results = { success: 0, failed: 0, errors: [] };
         const userBranch = req.user.store_location || 'Main Warehouse';
@@ -2639,17 +2694,14 @@ app.post('/api/products/bulk', authenticateToken, upload.single('file'), async (
                         const normalizedPattern = normalizeKey(pattern);
                         const match = rowKeys.find(k => normalizeKey(k).includes(normalizedPattern));
                         if (match) {
-                            console.log(`[BULK UPLOAD] Matched "${pattern}" to column "${match}" with value:`, row[match]);
                             return row[match];
                         }
                     }
-                    console.log(`[BULK UPLOAD] No match found for patterns:`, patterns);
                     return '';
                 };
 
                 name = findColumn(['product name', 'name']).toString().trim();
                 if (!name) {
-                    console.log('[BULK UPLOAD] Skipping row - no product name found');
                     continue; // Skip empty rows
                 }
 
@@ -2753,7 +2805,6 @@ app.post('/api/products/bulk', authenticateToken, upload.single('file'), async (
                          WHERE id = $11`,
                         [name, category, price, cost, newTotalStock, newStockLevels, sellingUnit, packagingUnit, conversionRate, reorderLevel, existingProduct.id]
                     );
-                    console.log(`[BULK UPLOAD] UPDATED/INCREMENTED product: ${name} (${barcode}). New Total: ${newTotalStock}`);
                 } else {
                     // NEW: Calculate initial stock levels
                     stockLevels = JSON.stringify({ [userBranch]: stock });
@@ -2764,12 +2815,10 @@ app.post('/api/products/bulk', authenticateToken, upload.single('file'), async (
                          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, true, true, $12)`,
                         [barcode, name, category, price, cost, stock, stockLevels, sellingUnit, packagingUnit, conversionRate, reorderLevel, req.user.tenant_id]
                     );
-                    console.log(`[BULK UPLOAD] INSERTED product: ${name} (${barcode}). Initial Stock: ${stock}`);
                 }
 
                 // If batch number is provided, create/update batch record
                 if (batchNumber) {
-                    console.log(`[BULK UPLOAD] Creating batch (if new): ${batchNumber} for ${barcode}`);
                     await pool.query(
                         `INSERT INTO product_batches (product_barcode, batch_number, expiry_date, quantity, quantity_available, quantity_received, branch_id, status)
                          VALUES ($1, $2, $3, $4, $4, $4, $5, 'Active')
@@ -2911,9 +2960,9 @@ app.delete('/products/:barcode', authenticateToken, async (req, res) => {
         const productName = product.name || 'Unknown';
 
         if (isGlobalAdmin) {
-            // Admins wipe the entire product globally
-            await pool.query('DELETE FROM products WHERE (barcode = $1 OR id::text = $1) AND tenant_id = $2', [req.params.barcode, tenantId]);
-            await logActivity(req, 'DELETE_PRODUCT_GLOBAL', { identifier: req.params.barcode, name: productName });
+            // Soft delete: product hidden globally but retained for 10-year compliance
+            await pool.query('UPDATE products SET deleted_at = NOW() WHERE (barcode = $1 OR id::text = $1) AND tenant_id = $2', [req.params.barcode, tenantId]);
+            await logActivity(req, 'SOFT_DELETE_PRODUCT_GLOBAL', { identifier: req.params.barcode, name: productName });
         } else {
              // Branch Managers ONLY remove their isolated branch stock keys
              let levels = typeof product.stock_levels === 'string' ? JSON.parse(product.stock_levels || '{}') : (product.stock_levels || {});
@@ -2962,9 +3011,9 @@ app.delete('/api/products/:barcode', authenticateToken, async (req, res) => {
         const productName = product.name || 'Unknown';
 
         if (isGlobalAdmin) {
-            // Admins wipe the entire product globally
-            await pool.query('DELETE FROM products WHERE (barcode = $1 OR id::text = $1) AND tenant_id = $2', [req.params.barcode, tenantId]);
-            await logActivity(req, 'DELETE_PRODUCT_GLOBAL', { identifier: req.params.barcode, name: productName });
+            // Soft delete: product hidden globally but retained for 10-year compliance
+            await pool.query('UPDATE products SET deleted_at = NOW() WHERE (barcode = $1 OR id::text = $1) AND tenant_id = $2', [req.params.barcode, tenantId]);
+            await logActivity(req, 'SOFT_DELETE_PRODUCT_GLOBAL', { identifier: req.params.barcode, name: productName });
         } else {
              // Branch Managers ONLY remove their isolated branch stock keys
              let levels = typeof product.stock_levels === 'string' ? JSON.parse(product.stock_levels || '{}') : (product.stock_levels || {});
@@ -3031,7 +3080,7 @@ app.get('/transactions/all', authenticateToken, async (req, res) => {
 // --- CATEGORIES MANAGEMENT ---
 app.get('/api/categories', authenticateToken, async (req, res) => {
     try {
-        let query = 'SELECT * FROM categories WHERE tenant_id = $1';
+        let query = 'SELECT * FROM categories WHERE tenant_id = $1 AND deleted_at IS NULL';
         let params = [req.user.tenant_id];
 
         // Filter by branch for non-CEO/Admin users
@@ -3067,7 +3116,8 @@ app.post('/api/categories', authenticateToken, async (req, res) => {
 
 app.delete('/api/categories/:id', authenticateToken, async (req, res) => {
     try {
-        let query = 'DELETE FROM categories WHERE id = $1 AND tenant_id = $2';
+        // Soft delete: category hidden but retained
+        let query = 'UPDATE categories SET deleted_at = NOW() WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL';
         let params = [req.params.id, req.user.tenant_id];
 
         if (req.user.role !== 'admin' && req.user.role !== 'ceo' && req.user.store_id) {
@@ -3078,7 +3128,7 @@ app.delete('/api/categories/:id', authenticateToken, async (req, res) => {
         const result = await pool.query(query, params);
         if (result.rowCount === 0) return res.status(404).json({ message: 'Category not found or access denied' });
 
-        await logActivity(req, 'DELETE_CATEGORY', { id: req.params.id });
+        await logActivity(req, 'SOFT_DELETE_CATEGORY', { id: req.params.id });
         res.json({ success: true });
     } catch (err) { console.error(err); res.status(500).json({ message: 'Error deleting category' }); }
 });
@@ -3089,7 +3139,7 @@ app.get('/api/suppliers', authenticateToken, async (req, res) => {
         let query = `SELECT s.*, b.name as branch_name, b.location as branch_location 
             FROM suppliers s
             LEFT JOIN branches b ON s.branch_id = b.id
-            WHERE s.tenant_id = $1`;
+            WHERE s.tenant_id = $1 AND s.deleted_at IS NULL`;
         let params = [req.user.tenant_id];
 
         if (req.user.role !== 'admin' && req.user.role !== 'ceo' && req.user.store_id) {
@@ -3138,7 +3188,8 @@ app.put('/api/suppliers/:id', authenticateToken, async (req, res) => {
 
 app.delete('/api/suppliers/:id', authenticateToken, async (req, res) => {
     try {
-        let query = 'DELETE FROM suppliers WHERE id = $1 AND tenant_id = $2';
+        // Soft delete: supplier hidden but retained for compliance
+        let query = 'UPDATE suppliers SET deleted_at = NOW() WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL';
         let params = [req.params.id, req.user.tenant_id];
 
         if (req.user.role !== 'admin' && req.user.role !== 'ceo' && req.user.store_id) {
@@ -3149,13 +3200,10 @@ app.delete('/api/suppliers/:id', authenticateToken, async (req, res) => {
         const result = await pool.query(query, params);
         if (result.rowCount === 0) return res.status(404).json({ message: 'Supplier not found or access denied' });
 
-        await logActivity(req, 'DELETE_SUPPLIER', { id: req.params.id });
+        await logActivity(req, 'SOFT_DELETE_SUPPLIER', { id: req.params.id });
         res.json({ success: true });
     } catch (err) { 
-        console.error(err); 
-        if (err.code === '23503') {
-            return res.status(400).json({ message: 'Cannot delete supplier because it is linked to existing purchase orders.' });
-        }
+        console.error(err);
         res.status(500).json({ message: 'Error deleting supplier' }); 
     }
 });
@@ -3486,11 +3534,9 @@ app.post('/api/transfers', authenticateToken, async (req, res) => {
     try {
         await client.query('BEGIN');
 
-        console.log(`\n📦 TRANSFER REQUEST: ${from} → ${to}`);
-        console.log(`Items:`, JSON.stringify(items, null, 2));
 
         // Get branch mapping to find correct stock_levels keys
-        const branchesRes = await client.query('SELECT id, name, location FROM branches');
+        const branchesRes = await client.query('SELECT id, name, location FROM branches WHERE deleted_at IS NULL');
         const branches = branchesRes.rows;
 
         // Map the 'from' location to the correct branch name
@@ -3503,7 +3549,6 @@ app.post('/api/transfers', authenticateToken, async (req, res) => {
         const toMatch = branches.find(b => b.name === to || b.location === to);
         if (toMatch) mappedTo = toMatch.name;
 
-        console.log(`   Branch mapping: ${from} → ${mappedFrom}, ${to} → ${mappedTo}`);
 
         if (mappedFrom === mappedTo) {
             throw new Error(`Invalid Transfer: Both the 'From' (${from}) and 'To' (${to}) locations map to the exact same physical branch (${mappedFrom}). You cannot transfer stock into the same store.`);
@@ -3521,9 +3566,6 @@ app.post('/api/transfers', authenticateToken, async (req, res) => {
             }
 
             const product = checkRes.rows[0];
-            console.log(`\n📍 Product: ${item.barcode}`);
-            console.log(`   Total stock in DB: ${product.stock}`);
-            console.log(`   stock_levels in DB:`, product.stock_levels);
 
             // Determine location stock - check multiple possible keys
             let stockLevels = product.stock_levels || {};
@@ -3555,19 +3597,13 @@ app.post('/api/transfers', authenticateToken, async (req, res) => {
 
             // Deduct from Total Stock and Source Location to keep values in sync
             // The items are "In Transit" and thus temporarily removed from available inventory
-            console.log(`   📉 Before deduction: Total=${product.stock}, ${primaryKey}=${stockLevels[primaryKey]}`);
-            console.log(`   📉 Stock levels object:`, JSON.stringify(stockLevels));
-            console.log(`   📉 Product ID being updated: ${product.id}`);
 
             await client.query('UPDATE products SET stock = stock - $1 WHERE id = $2', [item.qty, product.id]);
 
             stockLevels[primaryKey] = consolidatedStock - item.qty;
-            console.log(`   📉 After local update: ${primaryKey}=${stockLevels[primaryKey]}`);
-            console.log(`   📉 Final stock levels to save:`, JSON.stringify(stockLevels));
 
             await client.query('UPDATE products SET stock_levels = $1 WHERE id = $2', [JSON.stringify(stockLevels), product.id]);
 
-            console.log(`   📉 After deduction: Total=${product.stock - item.qty}, ${primaryKey}=${stockLevels[primaryKey]}`);
         }
 
         // Insert Transfer AFTER validating and deducting stock
@@ -3577,13 +3613,11 @@ app.post('/api/transfers', authenticateToken, async (req, res) => {
         );
 
         await client.query('COMMIT');
-        console.log(`✅ Transfer completed successfully\n`);
         await logActivity(req, 'CREATE_TRANSFER', { from, to, itemCount: items.length });
         res.json({ success: true });
     } catch (err) {
         await client.query('ROLLBACK');
-        console.error(`❌ Transfer error:`, err.message);
-        console.log('');
+        console.error(`Transfer error:`, err.message);
         res.status(500).json({ message: err.message || 'Error creating transfer' });
     } finally {
         client.release();
@@ -3621,8 +3655,6 @@ app.post('/api/transfers/:id/receive', authenticateToken, async (req, res) => {
 
         // Add Stock to Destination Location and restore to Global Total Stock
         for (const item of items) {
-            console.log(`   📈 Receiving item: ${item.barcode}, qty: ${item.qty}`);
-            console.log(`   📈 Destination: ${transfer.to_location}`);
 
             // Get current stock before update
             const currentStockRes = await client.query('SELECT stock, stock_levels FROM products WHERE id = $1 AND tenant_id = $2 FOR UPDATE', [item.product_id, req.user.tenant_id]);
@@ -3641,7 +3673,6 @@ app.post('/api/transfers/:id/receive', authenticateToken, async (req, res) => {
                 currentBranchStock = parseInt(levels[transfer.to_location]) || 0;
             }
 
-            console.log(`   📈 Before receipt: Total=${currentStock.stock}, ${transfer.to_location}=${currentBranchStock}`);
 
             // Restore to total stock now that items are available in a branch again
             await client.query('UPDATE products SET stock = stock + $1 WHERE id = $2', [item.qty, item.product_id]);
@@ -3674,7 +3705,6 @@ app.post('/api/transfers/:id/receive', authenticateToken, async (req, res) => {
                 updatedBranchStock = parseInt(levels[transfer.to_location]) || 0;
             }
 
-            console.log(`   📈 After receipt: Total=${updatedStock.stock}, ${transfer.to_location}=${updatedBranchStock}`);
         }
 
         await client.query("UPDATE stock_transfers SET status = 'Received' WHERE id = $1", [id]);
@@ -3775,13 +3805,14 @@ app.get('/api/inventory/reorder', authenticateToken, async (req, res) => {
             // Branch specific check using stock_levels JSON
             query = `
                 SELECT * FROM products 
-                WHERE (COALESCE(stock_levels->>$1, '0'))::int < COALESCE(reorder_level, 10)
+                WHERE deleted_at IS NULL
+                AND (COALESCE(stock_levels->>$1, '0'))::int < COALESCE(reorder_level, 10)
                 ORDER BY (COALESCE(stock_levels->>$1, '0'))::int ASC
             `;
             params.push(req.user.store_location);
         } else {
             // Global check
-            query = 'SELECT * FROM products WHERE stock < COALESCE(reorder_level, 10) ORDER BY stock ASC';
+            query = 'SELECT * FROM products WHERE deleted_at IS NULL AND stock < COALESCE(reorder_level, 10) ORDER BY stock ASC';
         }
 
         const result = await pool.query(query, params);
@@ -3809,15 +3840,10 @@ app.get('/api/inventory/negative-analysis', authenticateToken, async (req, res) 
             let checkStock = 0;
 
             if (isCompany) {
-                checkStock = parseInt(
-                    levels[branchStockKey] !== undefined ? levels[branchStockKey] :
-                        levels[userBranch] !== undefined ? levels[userBranch] :
-                            levels['NOVELTY'] !== undefined ? levels['NOVELTY'] :
-                                levels['Novelty'] !== undefined ? levels['Novelty'] :
-                                    levels['Dzorwulu'] !== undefined ? levels['Dzorwulu'] :
-                                        levels['DZORWULU'] !== undefined ? levels['DZORWULU'] :
-                                            levels['Main Warehouse'] !== undefined ? levels['Main Warehouse'] : 0
-                );
+                // Dynamically resolve stock for this branch — no hardcoded names
+                const matchKey = Object.keys(levels).find(k => k.toLowerCase() === (branchStockKey || '').toLowerCase())
+                    || Object.keys(levels).find(k => k.toLowerCase() === (userBranch || '').toLowerCase());
+                checkStock = parseInt(matchKey ? levels[matchKey] : 0);
             } else if (!isAdmin) {
                 const manualFallback = req.user && req.user.store_location ? req.user.store_location : 'Main Warehouse';
                 checkStock = parseInt(levels[branchStockKey] !== undefined ? levels[branchStockKey] : levels[manualFallback] !== undefined ? levels[manualFallback] : 0);
@@ -4002,7 +4028,6 @@ app.get('/transactions/me', authenticateToken, async (req, res) => {
 
 // Get Single Transaction Endpoint
 app.get('/transactions/:id', authenticateToken, async (req, res) => {
-    console.log(`[DEBUG] Fetching transaction ID: ${req.params.id}`);
     if (!req.user) return res.status(401).json({ message: 'Not authenticated' });
 
     let { id } = req.params;
@@ -4086,7 +4111,6 @@ app.put('/transactions/:id/finalize', authenticateToken, async (req, res) => {
 
     // Convert customerId to integer if provided
     const parsedCustomerId = customerId ? parseInt(customerId) : null;
-    console.log('💳 Finalizing transaction with customerId:', parsedCustomerId, '(type:', typeof parsedCustomerId, ')');
 
     try {
         const client = await pool.connect();
@@ -4102,7 +4126,7 @@ app.put('/transactions/:id/finalize', authenticateToken, async (req, res) => {
                 const receiptNum = receiptNumber || txnRes.rows[0].receipt_number || ('RCP' + Date.now());
 
                 // Get customer details
-                const custDetailRes = await client.query('SELECT name, current_balance, credit_limit FROM customers WHERE id = $1', [parsedCustomerId]);
+                const custDetailRes = await client.query('SELECT name, current_balance, credit_limit FROM customers WHERE id = $1 AND deleted_at IS NULL', [parsedCustomerId]);
                 if (custDetailRes.rows.length === 0) throw new Error('Customer not found');
 
                 customerName = custDetailRes.rows[0].name;
@@ -4144,7 +4168,6 @@ app.put('/transactions/:id/finalize', authenticateToken, async (req, res) => {
 
 // Get Transaction by Receipt Number (for returns)
 app.get('/transactions/receipt/:receiptNumber', authenticateToken, async (req, res) => {
-    console.log(`[DEBUG] Fetching transaction by receipt: ${req.params.receiptNumber}`);
     if (!req.user) return res.status(401).json({ message: 'Not authenticated' });
 
     const { receiptNumber } = req.params;
@@ -4336,8 +4359,8 @@ app.get('/api/sales-summary', authenticateToken, async (req, res) => {
     }
 });
 
-// Mock Mobile Money Payment Endpoints
-app.post('/pay/momo', (req, res) => {
+// Mock Mobile Money Payment Endpoints (auth required)
+app.post('/pay/momo', authenticateToken, (req, res) => {
     res.json({
         success: true,
         transactionId: 'MOMO-' + Date.now(),
@@ -4345,25 +4368,28 @@ app.post('/pay/momo', (req, res) => {
     });
 });
 
-app.get('/pay/momo/status/:id', (req, res) => {
+app.get('/pay/momo/status/:id', authenticateToken, (req, res) => {
     res.json({ status: 'SUCCESSFUL' });
 });
 
-// --- DEBUG: Check Database Schema ---
-app.get('/api/debug/schema/:tableName', async (req, res) => {
+// --- DEBUG: Check Database Schema (admin only) ---
+app.get('/api/debug/schema/:tableName', authenticateToken, async (req, res) => {
+    if (req.user.role !== 'admin' && req.user.role !== 'ceo') {
+        return res.status(403).json({ message: 'Unauthorized' });
+    }
     try {
         const result = await pool.query(
             "SELECT column_name, data_type, is_nullable FROM information_schema.columns WHERE table_name = $1",
             [req.params.tableName]
         );
         res.json(result.rows);
-    } catch (err) { res.status(500).json(err); }
+    } catch (err) { res.status(500).json({ message: 'Error fetching schema' }); }
 });
 
 // Helper function to get branch name from user location
 async function getBranchNameFromLocation(userLocation, pool) {
     try {
-        const branchesRes = await pool.query('SELECT id, name, location FROM branches');
+        const branchesRes = await pool.query('SELECT id, name, location FROM branches WHERE deleted_at IS NULL');
         const branches = branchesRes.rows;
 
         // Check if user location matches any branch name or location
@@ -4385,7 +4411,7 @@ app.get('/api/branch-mapping', authenticateToken, async (req, res) => {
         const userLocation = req.user.store_location;
 
         // Get all branches to find the matching one
-        const branchesRes = await pool.query('SELECT id, name, location FROM branches');
+        const branchesRes = await pool.query('SELECT id, name, location FROM branches WHERE deleted_at IS NULL');
         const branches = branchesRes.rows;
 
         // Try to find a match
@@ -4446,7 +4472,7 @@ app.post('/api/debug/switch-role', authenticateToken, async (req, res) => {
         if (user.role === 'admin' || user.role === 'manager') redirectTo = '/dashboard';
         if (user.role === 'ceo') redirectTo = '/ceo-portal';
 
-        const token = jwt.sign(req.session.user, JWT_SECRET, { expiresIn: '7d' });
+        const token = jwt.sign(req.session.user, JWT_SECRET, { expiresIn: '8h' });
         await logActivity(req, 'DEBUG_SWITCH_ROLE', { targetRole });
 
         res.json({ success: true, token, redirectTo: redirectTo.replace(/^\//, ''), user: req.session.user });
@@ -4685,7 +4711,7 @@ app.get('/api/ceo/risks', authenticateToken, async (req, res) => {
 
         // Risk: Low Stock Only
         const lowStockRes = await pool.query(`
-            SELECT COUNT(*) as count FROM products WHERE stock <= reorder_level
+            SELECT COUNT(*) as count FROM products WHERE deleted_at IS NULL AND stock <= reorder_level
         `);
 
         if (parseInt(lowStockRes.rows[0].count) > 0) {
@@ -4754,7 +4780,7 @@ app.get('/api/ceo/approvals/credit-customers', authenticateToken, async (req, re
 app.get('/api/ceo/approvals/history', authenticateToken, async (req, res) => {
     if (req.user.role !== 'admin' && req.user.role !== 'ceo') return res.status(403).json({ message: 'Unauthorized' });
     try {
-        const result = await pool.query("SELECT * FROM customers WHERE status IN ('Active', 'Rejected') ORDER BY created_at DESC");
+        const result = await pool.query("SELECT * FROM customers WHERE status IN ('Active', 'Rejected') AND deleted_at IS NULL ORDER BY created_at DESC");
         await logActivity(req, 'VIEW_CEO_APPROVALS_HISTORY');
         res.json(result.rows);
     } catch (err) {
@@ -4763,31 +4789,6 @@ app.get('/api/ceo/approvals/history', authenticateToken, async (req, res) => {
     }
 });
 
-// --- DATA FIX ENDPOINT (Run once to fix Dale Shelly) ---
-app.get('/api/fix-dale', async (req, res) => {
-    try {
-        // 1. Ensure Manager has correct store
-        await pool.query("UPDATE users SET store_location = 'Accra Central' WHERE username = 'gzain'");
-
-        // 2. Link Customer to Manager
-        await pool.query("UPDATE customers SET created_by = (SELECT id FROM users WHERE username = 'gzain') WHERE name = 'Dale Shelly'");
-
-        res.send("Data fixed for Dale Shelly. Please refresh the CEO Portal.");
-    } catch (e) { res.status(500).send(e.message); }
-});
-// ------------------------------------------------------
-
-// 5b. Credit Approval History
-app.get('/api/ceo/approvals/history', authenticateToken, async (req, res) => {
-    if (req.user.role !== 'admin' && req.user.role !== 'ceo') return res.status(403).json({ message: 'Unauthorized' });
-    try {
-        const result = await pool.query("SELECT * FROM customers WHERE status IN ('Active', 'Rejected') ORDER BY created_at DESC");
-        res.json(result.rows);
-    } catch (err) {
-        console.error(err);
-        res.status(500).json({ message: "Server error" });
-    }
-});
 
 // 6. Approve Credit Customer
 app.post('/api/ceo/approvals/credit-customers/:id/approve', authenticateToken, async (req, res) => {
@@ -4891,7 +4892,7 @@ app.get('/api/ceo/staff-performance', authenticateToken, async (req, res) => {
             performance: parseFloat(r.sales) > 5000 ? 'High' : 'Normal'
         }));
 
-        const countRes = await pool.query("SELECT COUNT(*) FROM users WHERE status = 'Active'");
+        const countRes = await pool.query("SELECT COUNT(*) FROM users WHERE status = 'Active' AND deleted_at IS NULL");
 
         await logActivity(req, 'VIEW_CEO_STAFF_PERFORMANCE');
         res.json({ staff, headcount: countRes.rows[0].count });
@@ -5073,13 +5074,11 @@ app.post('/api/transactions', authenticateToken, async (req, res) => {
 
             // Convert customerId to integer if provided
             const parsedCustomerId = customerId ? parseInt(customerId) : null;
-            console.log('📝 Creating transaction with customerId:', parsedCustomerId, '(type:', typeof parsedCustomerId, ')');
-            console.log('🔄 Is Return:', isReturn || false, 'Original Transaction:', originalTransactionId);
 
             // Fetch customer name if ID is provided (Ensures data consistency)
             let customerName = null;
             if (parsedCustomerId) {
-                const cRes = await client.query('SELECT name FROM customers WHERE id = $1', [parsedCustomerId]);
+                const cRes = await client.query('SELECT name FROM customers WHERE id = $1 AND deleted_at IS NULL', [parsedCustomerId]);
                 if (cRes.rows.length > 0) customerName = cRes.rows[0].name;
             }
 
@@ -5134,7 +5133,6 @@ app.post('/api/transactions', authenticateToken, async (req, res) => {
                         const prodRes = await client.query('SELECT id FROM products WHERE barcode = $1 AND tenant_id = $2 LIMIT 1', [item.barcode, req.user.tenant_id]);
                         if (prodRes.rows.length > 0) {
                             productId = prodRes.rows[0].id;
-                            console.log(`[RETURN] Found product ID ${productId} by barcode ${item.barcode}`);
                         }
                     }
 
@@ -5156,7 +5154,6 @@ app.post('/api/transactions', authenticateToken, async (req, res) => {
                     `, [item.qty, productId, storeLoc]);
 
                     if (updateRes.rows.length > 0) {
-                        console.log(`[RETURN] Stock restored for ${updateRes.rows[0].name}: +${item.qty} units, new stock: ${updateRes.rows[0].stock}`);
                     } else {
                         console.error(`[RETURN] Failed to update stock for product ID ${productId}`);
                     }
@@ -5179,7 +5176,6 @@ app.post('/api/transactions', authenticateToken, async (req, res) => {
                     }
                 }
 
-                console.log('✅ Return transaction processed, stock restored');
             } else {
                 // Normal sale - deduct stock
                 // Resolve canonical branch name for POS user
@@ -5360,15 +5356,9 @@ app.get('/api/shelf/inventory/:branch_id', authenticateToken, async (req, res) =
 
             let bStock = 0;
             if (req.user && req.user.type === 'company') {
-                bStock = parseInt(
-                    levels[branchName] ||
-                    levels['NOVELTY'] ||
-                    levels['Novelty'] ||
-                    levels['Dzorwulu'] ||
-                    levels['DZORWULU'] ||
-                    levels['Main Warehouse'] ||
-                    0
-                );
+                // Dynamically resolve stock for this branch — no hardcoded names
+                const matchKey = Object.keys(levels).find(k => k.toLowerCase() === (branchName || '').toLowerCase());
+                bStock = parseInt(matchKey ? levels[matchKey] : 0);
             } else {
                 const manualFallback = req.user && req.user.store_location ? req.user.store_location : 'Main Warehouse';
                 bStock = parseInt(levels[branchName] || levels[manualFallback] || levels['Main Warehouse'] || 0);
@@ -5892,6 +5882,7 @@ app.get('/api/branches', authenticateToken, async (req, res) => {
             SELECT b.*, COALESCE(ss.vat_rate, 15.00) as vat_rate 
             FROM branches b
             LEFT JOIN system_settings ss ON b.id = ss.branch_id
+            WHERE b.deleted_at IS NULL
             ORDER BY b.id
         `);
         res.json(result.rows);
@@ -5979,11 +5970,8 @@ app.delete('/api/branches/:id', authenticateToken, async (req, res) => {
             return res.status(404).json({ success: false, message: 'Branch not found or belongs to another tenant.' });
         }
         
-        // Remove system settings reference first to prevent Foreign Key blocks
-        await client.query('DELETE FROM system_settings WHERE branch_id = $1', [branchId]);
-        
-        // Delete the branch
-        await client.query('DELETE FROM branches WHERE id = $1 AND tenant_id = $2', [branchId, req.user.tenant_id]);
+        // Soft delete: branch hidden but all historical data (transactions, stock) retained
+        await client.query('UPDATE branches SET deleted_at = NOW() WHERE id = $1 AND tenant_id = $2', [branchId, req.user.tenant_id]);
         
         await client.query('COMMIT');
         
@@ -6014,7 +6002,6 @@ app.post('/api/verify-auth-code', authenticateToken, async (req, res) => {
         const dbStoreId = userCheck.rows[0]?.store_id;
         const branchId = dbStoreId || req.user.store_id || 1;
 
-        console.log(`[AUTH-VERIFY] User: ${req.user.id}, Branch: ${branchId}, Code: '${code}'`);
         const inputCode = String(code).trim();
 
         // 1. Check User's Branch
@@ -6029,7 +6016,6 @@ app.post('/api/verify-auth-code', authenticateToken, async (req, res) => {
 
             if (dbCode === inputCode) {
                 if (row.credit_auth_code_expiry && new Date() > new Date(row.credit_auth_code_expiry)) {
-                    console.log(`[AUTH-VERIFY] ${source}: Code expired`);
                     return 'expired';
                 }
                 return 'valid';
@@ -6041,15 +6027,12 @@ app.post('/api/verify-auth-code', authenticateToken, async (req, res) => {
 
         // Check local branch
         if (branchRes.rows.length > 0) {
-            console.log(`[AUTH-VERIFY] Found settings for Branch ${branchId}. DB has: '${branchRes.rows[0].credit_auth_code}'`);
             status = checkCode(branchRes.rows[0], 'Local Branch');
         } else {
-            console.log(`[AUTH-VERIFY] No settings found for Branch ${branchId}.`);
         }
 
         // If not valid locally, and we are not already at branch 1, check main branch
         if (status !== 'valid' && branchId !== 1 && mainRes.rows.length > 0) {
-            console.log(`[AUTH-VERIFY] Checking Main Branch (1) fallback. DB has: '${mainRes.rows[0].credit_auth_code}'`);
             const mainStatus = checkCode(mainRes.rows[0], 'Main Branch');
             if (mainStatus === 'valid') status = 'valid';
             else if (mainStatus === 'expired' && status !== 'expired') status = 'expired';
@@ -6065,7 +6048,6 @@ app.post('/api/verify-auth-code', authenticateToken, async (req, res) => {
         } else if (status === 'expired') {
             res.status(401).json({ success: false, message: 'Authorization code has expired' });
         } else {
-            console.log(`[AUTH-VERIFY] Failed. Input '${inputCode}' did not match DB.`);
             res.status(401).json({ success: false, message: 'Invalid authorization code' });
         }
     } catch (err) {
@@ -6115,7 +6097,6 @@ app.post('/api/settings/auth-code', authenticateToken, async (req, res) => {
             `, [nextId, branchId, code, expiry]);
         }
 
-        console.log(`[AUTH-GEN] Generated code ${code} for Branch ${branchId}`);
         await logActivity(req, 'GENERATE_AUTH_CODE');
         res.json({ success: true, code, expiry });
     } catch (err) {
@@ -6128,7 +6109,7 @@ app.post('/api/settings/auth-code', authenticateToken, async (req, res) => {
 
 app.get('/api/customers', authenticateToken, async (req, res) => {
     try {
-        const result = await pool.query('SELECT * FROM customers ORDER BY name');
+        const result = await pool.query('SELECT * FROM customers WHERE deleted_at IS NULL ORDER BY name');
         await logActivity(req, 'VIEW_CUSTOMER_LIST');
         res.json(result.rows);
     } catch (err) { res.status(500).json({ message: 'Server error' }); }
@@ -6205,7 +6186,7 @@ app.post('/api/customers/:id/payment', authenticateToken, async (req, res) => {
 
 app.get('/api/customers/:id', authenticateToken, async (req, res) => {
     try {
-        const result = await pool.query('SELECT * FROM customers WHERE id = $1', [req.params.id]);
+        const result = await pool.query('SELECT * FROM customers WHERE id = $1 AND deleted_at IS NULL', [req.params.id]);
         if (result.rows.length === 0) return res.status(404).json({ message: 'Customer not found' });
         res.json(result.rows[0]);
     } catch (err) { res.status(500).json({ message: 'Server error' }); }
@@ -6216,7 +6197,7 @@ app.put('/api/customers/:id', authenticateToken, async (req, res) => {
     const { name, phone, email, creditLimit } = req.body;
 
     try {
-        const currentRes = await pool.query('SELECT * FROM customers WHERE id = $1', [id]);
+        const currentRes = await pool.query('SELECT * FROM customers WHERE id = $1 AND deleted_at IS NULL', [id]);
         if (currentRes.rows.length === 0) return res.status(404).json({ message: 'Customer not found' });
 
         const current = currentRes.rows[0];
@@ -6251,15 +6232,11 @@ app.delete('/api/customers/:id', authenticateToken, async (req, res) => {
     const { id } = req.params;
     const client = await pool.connect();
     try {
-        await client.query('BEGIN');
-
-        // Delete related records first (in correct order to avoid foreign key issues)
-        await client.query('DELETE FROM customer_payments WHERE customer_id = $1', [id]);
-        await client.query('DELETE FROM customer_ledger WHERE customer_id = $1', [id]);
-        await client.query('DELETE FROM transactions WHERE customer_id = $1', [id]);
-
-        // Finally delete the customer
-        const result = await client.query('DELETE FROM customers WHERE id = $1 RETURNING id', [id]);
+        // Soft delete: customer hidden from frontend; all payments, ledger & transaction history retained
+        const result = await client.query(
+            'UPDATE customers SET deleted_at = NOW() WHERE id = $1 AND deleted_at IS NULL RETURNING id',
+            [id]
+        );
 
         if (result.rows.length === 0) {
             await client.query('ROLLBACK');
@@ -6267,8 +6244,8 @@ app.delete('/api/customers/:id', authenticateToken, async (req, res) => {
         }
 
         await client.query('COMMIT');
-        await logActivity(req, 'DELETE_CUSTOMER', { id });
-        res.json({ success: true, message: 'Customer and all related records deleted successfully' });
+        await logActivity(req, 'SOFT_DELETE_CUSTOMER', { id });
+        res.json({ success: true, message: 'Customer hidden (payment history & records retained for compliance)' });
     } catch (err) {
         await client.query('ROLLBACK');
         console.error('Error deleting customer:', err);
@@ -6290,7 +6267,7 @@ async function getCustomerStatementData(customerId, month, year) {
     const endDate = new Date(targetYear, targetMonth, 0).toISOString().split('T')[0];
 
     // Get Customer
-    const custRes = await pool.query('SELECT * FROM customers WHERE id = $1', [customerId]);
+    const custRes = await pool.query('SELECT * FROM customers WHERE id = $1 AND deleted_at IS NULL', [customerId]);
     if (custRes.rows.length === 0) throw new Error('Customer not found');
     const customer = custRes.rows[0];
 
@@ -6336,7 +6313,7 @@ app.get('/api/customers/:id/statement-data', authenticateToken, async (req, res)
         const endDate = new Date(year, month, 0).toISOString().split('T')[0];
 
         // Get Customer
-        const custRes = await pool.query('SELECT * FROM customers WHERE id = $1', [customerId]);
+        const custRes = await pool.query('SELECT * FROM customers WHERE id = $1 AND deleted_at IS NULL', [customerId]);
         if (custRes.rows.length === 0) {
             return res.status(404).json({ message: 'Customer not found' });
         }
@@ -6397,7 +6374,6 @@ app.get('/api/customers/:id/statement-data', authenticateToken, async (req, res)
 
 app.post('/api/customers/:id/email-statement', authenticateToken, async (req, res) => {
     try {
-        console.log('📧 Starting email-statement request for customer ID:', req.params.id);
         const customerId = req.params.id;
         let { month, year, pdfData: clientPdf } = req.body;
 
@@ -6420,7 +6396,6 @@ app.post('/api/customers/:id/email-statement', authenticateToken, async (req, re
             return res.status(400).json({ message: 'Invalid year' });
         }
 
-        console.log('📅 Statement Request - Customer ID:', customerId, '| Month:', month, '| Year:', year);
 
         // Calculate month name (needed for PDF and email)
         const monthName = new Date(year, month - 1).toLocaleString('default', { month: 'long' });
@@ -6430,7 +6405,7 @@ app.post('/api/customers/:id/email-statement', authenticateToken, async (req, re
         const endDate = new Date(year, month, 0).toISOString().split('T')[0];
 
         // Get Customer
-        const custRes = await pool.query('SELECT * FROM customers WHERE id = $1', [customerId]);
+        const custRes = await pool.query('SELECT * FROM customers WHERE id = $1 AND deleted_at IS NULL', [customerId]);
         if (custRes.rows.length === 0) {
             return res.status(404).json({ message: 'Customer not found' });
         }
@@ -6441,36 +6416,43 @@ app.post('/api/customers/:id/email-statement', authenticateToken, async (req, re
 
         // Use current balance for "Amount Used" display (all-time debt)
         const amountUsed = parseFloat(customer.current_balance || 0);
-        console.log(`💰 Statement Generation - Amount Used: ${amountUsed}`);
 
         let pdfData;
 
-        // Force server-side generation to ensure accuracy (Ignore frontend PDF)
-        if (false && clientPdf) {
-            console.log('📄 Using client-provided PDF data');
-            pdfData = Buffer.from(clientPdf, 'base64');
-        } else {
-            console.log('🔄 GENERATING NEW PDF STATEMENT (v3.0 - Ledger Rebuild)');
+        // Always use server-side PDF generation for accuracy
+        {
 
-            // 1. REBUILD LEDGER FOR THIS CUSTOMER (Ensures "Table" is full and accurate)
-            // This fixes missing transactions by pulling everything fresh from source tables
-            await pool.query('DELETE FROM customer_ledger WHERE customer_id = $1', [customerId]);
+            // 1. REBUILD LEDGER FOR THIS CUSTOMER inside a transaction
+            // Wrapped in BEGIN/COMMIT so a crash between DELETE and INSERT can't wipe the ledger
+            const ledgerClient = await pool.connect();
+            try {
+                await ledgerClient.query('BEGIN');
 
-            // Insert Sales (Credit Transactions)
-            await pool.query(`
-                INSERT INTO customer_ledger (customer_id, date, description, type, debit, credit, transaction_id)
-                SELECT customer_id, created_at, COALESCE(receipt_number, 'TRX') || ' (Sale)', 'SALE', total_amount, 0, id
-                FROM transactions 
-                WHERE customer_id = $1 AND status = 'completed'
-            `, [customerId]);
+                await ledgerClient.query('DELETE FROM customer_ledger WHERE customer_id = $1', [customerId]);
 
-            // Insert Payments
-            await pool.query(`
-                INSERT INTO customer_ledger (customer_id, date, description, type, debit, credit)
-                SELECT customer_id, payment_date, 'Payment Received', 'PAYMENT', 0, amount 
-                FROM customer_payments 
-                WHERE customer_id = $1
-            `, [customerId]);
+                // Insert Sales (Credit Transactions)
+                await ledgerClient.query(`
+                    INSERT INTO customer_ledger (customer_id, date, description, type, debit, credit, transaction_id)
+                    SELECT customer_id, created_at, COALESCE(receipt_number, 'TRX') || ' (Sale)', 'SALE', total_amount, 0, id
+                    FROM transactions 
+                    WHERE customer_id = $1 AND status = 'completed'
+                `, [customerId]);
+
+                // Insert Payments
+                await ledgerClient.query(`
+                    INSERT INTO customer_ledger (customer_id, date, description, type, debit, credit)
+                    SELECT customer_id, payment_date, 'Payment Received', 'PAYMENT', 0, amount 
+                    FROM customer_payments 
+                    WHERE customer_id = $1
+                `, [customerId]);
+
+                await ledgerClient.query('COMMIT');
+            } catch (ledgerErr) {
+                await ledgerClient.query('ROLLBACK');
+                throw new Error('Failed to rebuild customer ledger: ' + ledgerErr.message);
+            } finally {
+                ledgerClient.release();
+            }
 
             // 2. CALCULATE OPENING BALANCE
             // Sum of all activity BEFORE the start date
@@ -6492,7 +6474,6 @@ app.post('/api/customers/:id/email-statement', authenticateToken, async (req, re
                 ORDER BY cl.date ASC, cl.id ASC
             `, [customerId, startDate, endDate]);
 
-            console.log(`📊 Ledger Rebuilt. Opening Balance: ${openingBalance}. Transactions found: ${ledgerRes.rows.length}`);
 
             // Fetch VAT rate from system settings
             let vatRate = 15.0; // Default VAT rate
@@ -6734,8 +6715,6 @@ app.post('/api/customers/:id/email-statement', authenticateToken, async (req, re
             auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS }
         });
 
-        console.log('📨 Preparing email for:', customer.email);
-        console.log('📄 PDF Size:', (pdfData.length / 1024).toFixed(2), 'KB');
 
         const emailHtml = `
             <div style="font-family: 'Arial', sans-serif; line-height: 1.6; color: #333; max-width: 600px;">
@@ -6796,10 +6775,7 @@ app.post('/api/customers/:id/email-statement', authenticateToken, async (req, re
             }]
         };
 
-        console.log('📤 Sending email...');
         const info = await transporter.sendMail(mailOptions);
-        console.log('✅ Email sent successfully!');
-        console.log('📧 Message ID:', info.messageId);
 
         await logActivity(req, 'EMAIL_STATEMENT', { customerId: req.params.id, month, year, messageId: info.messageId });
         res.json({
@@ -6931,12 +6907,12 @@ app.get('/api/taxes/active', authenticateToken, async (req, res) => {
         const userType = req.user.type || 'staff';
 
         // 1. Fetch Additional Taxes
-        let query = "SELECT id, name, rate FROM tax_rules WHERE status = 'Active' AND branch_id = $1 ORDER BY name ASC";
+        let query = "SELECT id, name, rate FROM tax_rules WHERE status = 'Active' AND branch_id = $1 AND deleted_at IS NULL ORDER BY name ASC";
         let params = [branchId];
 
         // Refined Isolation: Global taxes (Branch 1) flow to ALL physical branches but NOT to Company Portals
         if (userType !== 'company') {
-            query = "SELECT id, name, rate FROM tax_rules WHERE status = 'Active' AND (branch_id = $1 OR branch_id = 1) ORDER BY name ASC";
+            query = "SELECT id, name, rate FROM tax_rules WHERE status = 'Active' AND (branch_id = $1 OR branch_id = 1) AND deleted_at IS NULL ORDER BY name ASC";
         }
 
         const rulesRes = await pool.query(query, params);
@@ -6973,12 +6949,12 @@ app.get('/api/taxes', authenticateToken, async (req, res) => {
         const branchId = req.user.store_id || 1;
         const userType = req.user.type || 'staff';
 
-        let query = 'SELECT * FROM tax_rules WHERE branch_id = $1 ORDER BY created_at DESC';
+        let query = 'SELECT * FROM tax_rules WHERE branch_id = $1 AND deleted_at IS NULL ORDER BY created_at DESC';
         let params = [branchId];
 
         // Management Isolation: CEO/Admin can see Global (Branch 1) and their specific context
         if (userType !== 'company' && (req.user.role === 'ceo' || req.user.role === 'admin')) {
-            query = 'SELECT * FROM tax_rules WHERE (branch_id = $1 OR branch_id = 1) ORDER BY created_at DESC';
+            query = 'SELECT * FROM tax_rules WHERE (branch_id = $1 OR branch_id = 1) AND deleted_at IS NULL ORDER BY created_at DESC';
         }
 
         const result = await pool.query(query, params);
@@ -7031,7 +7007,8 @@ app.delete('/api/taxes/:id', authenticateToken, async (req, res) => {
     if (req.user.role !== 'admin' && req.user.role !== 'ceo') return res.status(403).json({ message: 'Unauthorized' });
     const { id } = req.params;
     try {
-        await pool.query('DELETE FROM tax_rules WHERE id = $1', [id]);
+        // Soft delete: tax rule hidden but retained for historical transaction accuracy
+        await pool.query('UPDATE tax_rules SET deleted_at = NOW() WHERE id = $1', [id]);
         await logActivity(req, 'DELETE_TAX_RULE', { id });
         res.json({ success: true });
     } catch (err) {
@@ -7050,7 +7027,7 @@ app.get('/api/ceo/tax-report', authenticateToken, async (req, res) => {
         // 1. Get Active Tax Rules (for Columns) - Isolated from Company Portal
         const branchId = req.user.store_id || 1;
         const rulesRes = await pool.query(
-            "SELECT * FROM tax_rules WHERE status = 'Active' AND (branch_id = $1 OR branch_id = 1) ORDER BY created_at DESC",
+            "SELECT * FROM tax_rules WHERE status = 'Active' AND deleted_at IS NULL AND (branch_id = $1 OR branch_id = 1) ORDER BY created_at DESC",
             [branchId]
         );
         const activeRules = rulesRes.rows;
@@ -7455,7 +7432,7 @@ app.post('/api/company/quick-sale', authenticateToken, async (req, res) => {
             // If credit payment, update customer balance
             if (payment_method === 'credit' && customer_id) {
                 // Verify limit again on server side for safety
-                const custRes = await client.query('SELECT credit_limit, current_balance FROM customers WHERE id = $1', [customer_id]);
+                const custRes = await client.query('SELECT credit_limit, current_balance FROM customers WHERE id = $1 AND deleted_at IS NULL', [customer_id]);
                 if (custRes.rows.length > 0) {
                     const cust = custRes.rows[0];
                     const newBalance = parseFloat(cust.current_balance) + parseFloat(total);
@@ -7487,19 +7464,19 @@ app.post('/api/company/quick-sale', authenticateToken, async (req, res) => {
 
             // --- INVENTORY DEDUCTION LOGIC (Company Portal Sales) ---
             if (!skip_stock) {
-                // Resolve branch for deduction (prioritizing NOVELTY then DZORWULU)
-                const branchSearch = ['%NOVELTY%', '%Novelty%', '%DZORWULU%', '%Dzorwulu%'];
-                const dzorBranchRes = await client.query(`
+                // Dynamically resolve the target branch from the authenticated user's store_location.
+                // Falls back to branch id=1 (the primary branch) if not set.
+                // No hardcoded branch names — works for any branch added in the future.
+                const userStoreLocation = req.user.store_location || null;
+                const branchLookupRes = await client.query(`
                     SELECT name FROM branches 
-                    WHERE name ILIKE ANY($1) OR location ILIKE ANY($1)
-                    ORDER BY CASE 
-                        WHEN name ILIKE '%NOVELTY%' THEN 1 
-                        WHEN name ILIKE '%DZORWULU%' THEN 2 
-                        ELSE 3 END
+                    WHERE ($1::text IS NOT NULL AND (name ILIKE $1 OR location ILIKE $1))
+                    UNION ALL
+                    SELECT name FROM branches WHERE id = 1
                     LIMIT 1
-                `, [branchSearch]);
+                `, [userStoreLocation]);
 
-                let targetBranch = dzorBranchRes.rows.length > 0 ? dzorBranchRes.rows[0].name : 'NOVELTY';
+                let targetBranch = branchLookupRes.rows.length > 0 ? branchLookupRes.rows[0].name : (userStoreLocation || 'Main Warehouse');
 
                 for (const item of items) {
                     const pid = item.id || item.product_id;
@@ -7703,7 +7680,7 @@ app.get('/api/company/taxes', authenticateToken, async (req, res) => {
             return res.json([]); // No store context = no taxes
         }
         const result = await pool.query(
-            'SELECT * FROM tax_rules WHERE branch_id = $1 ORDER BY created_at DESC',
+            'SELECT * FROM tax_rules WHERE branch_id = $1 AND deleted_at IS NULL ORDER BY created_at DESC',
             [companyBranchId]
         );
         res.json(result.rows);
@@ -7748,7 +7725,7 @@ app.put('/api/company/taxes/:id/toggle', authenticateToken, async (req, res) => 
 
         // Only allow toggling taxes that belong to THIS company
         const currentResult = await pool.query(
-            'SELECT status FROM tax_rules WHERE id = $1 AND branch_id = $2',
+            'SELECT status FROM tax_rules WHERE id = $1 AND branch_id = $2 AND deleted_at IS NULL',
             [taxId, companyBranchId]
         );
         if (currentResult.rows.length === 0) {
@@ -7779,7 +7756,7 @@ app.delete('/api/company/taxes/:id', authenticateToken, async (req, res) => {
 
         // Only allow deleting taxes that belong to THIS company
         const result = await pool.query(
-            'DELETE FROM tax_rules WHERE id = $1 AND branch_id = $2 RETURNING *',
+            'UPDATE tax_rules SET deleted_at = NOW() WHERE id = $1 AND branch_id = $2 AND deleted_at IS NULL RETURNING *',
             [taxId, companyBranchId]
         );
 

@@ -670,7 +670,7 @@
                                 <option value="admin">Administrator</option>
                             </select>
                         </div>
-                        <div class="form-group">
+                        <div class="form-group" style="display: none;">
                             <label>Assigned Store</label>
                             <input type="text" id="store" readonly required style="background-color: #f9f9f9; cursor: not-allowed;">
                         </div>
@@ -713,7 +713,7 @@
                             <th>Employee ID</th>
                             <th>Phone Number</th>
                             <th>Role</th>
-                            <th>Store Assigned</th>
+                            <th style="display: none;">Store Assigned</th>
                             <th>Status</th>
                             <th>Actions</th>
                         </tr>
@@ -951,7 +951,7 @@
                     <td data-label="Employee ID">${user.employeeId || '-'}</td>
                     <td data-label="Phone">${user.phone || '-'}</td>
                     <td data-label="Role">${user.role || 'Staff'}</td>
-                    <td data-label="Store">${user.store || '-'}</td>
+                    <td data-label="Store" style="display: none;">${user.store || '-'}</td>
                     <td data-label="Status">
                         <span class="status-badge ${user.status === 'Active' ? 'status-active' : 'status-inactive'}">
                             ${user.status || 'Active'}
@@ -1211,7 +1211,11 @@
                     
                     // Update Sidebar User Info
                     if(document.getElementById('userName')) document.getElementById('userName').textContent = user.name || user.fullName || 'User';
-                    if(document.getElementById('userRole')) document.getElementById('userRole').textContent = user.role === 'manager' ? 'Store Manager' : (user.role === 'admin' ? 'Administrator' : (user.role || 'Staff'));
+                    if(document.getElementById('userRole')) {
+                        const _roleLabel = user.role === 'manager' ? 'Store Manager' : (user.role === 'admin' ? 'Administrator' : (user.role || 'Staff'));
+                        const _branchLabel = user.store_location ? ` · ${user.store_location}` : '';
+                        document.getElementById('userRole').textContent = _roleLabel + _branchLabel;
+                    }
 
                     const storeInput = document.getElementById('store');
                     if (storeInput) {

@@ -391,7 +391,9 @@
             if (userStr) {
                 const user = JSON.parse(userStr);
                 document.getElementById('userName').textContent = user.name || 'User';
-                document.getElementById('userRole').textContent = user.role === 'manager' ? 'Store Manager' : (user.role === 'admin' ? 'Administrator' : (user.role || 'Staff'));
+                const roleLabel = user.role === 'manager' ? 'Store Manager' : (user.role === 'admin' ? 'Administrator' : (user.role || 'Staff'));
+                const branchLabel = user.store_location ? ` · ${user.store_location}` : '';
+                document.getElementById('userRole').textContent = roleLabel + branchLabel;
             }
 
             const loadingIndicator = document.getElementById('loadingIndicator');
@@ -416,6 +418,8 @@
                 }
 
                 const data = await response.json();
+                // Always refresh localStorage with the latest server data (clears stale values like old store names)
+                if (data.user) localStorage.setItem('currentUser', JSON.stringify(data.user));
                 initDashboard(data.user);
             } catch (error) {
                 console.error('Auth check failed:', error);
@@ -437,7 +441,9 @@
 
             // Update UI with user info
             document.getElementById('userName').textContent = user.name || (user.role === 'manager' ? 'Manager' : 'Admin');
-            document.getElementById('userRole').textContent = user.role === 'manager' ? 'Store Manager' : 'Administrator';
+            const roleLabel = user.role === 'manager' ? 'Store Manager' : 'Administrator';
+            const branchLabel = user.store_location ? ` · ${user.store_location}` : '';
+            document.getElementById('userRole').textContent = roleLabel + branchLabel;
             
             // Load dashboard data
             loadDashboardData();

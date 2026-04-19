@@ -1338,7 +1338,7 @@
                 <p style="color: #666; font-size: 14px; margin-top: 5px;">View and manage all product returns and refunds.</p>
             </div>
 
-            <div class="kpi-grid">
+            <div class="kpi-grid" style="grid-template-columns: repeat(4, 1fr);">
                 <div class="kpi-card">
                     <div class="kpi-header">
                         <div class="kpi-title">Total Returns</div>
@@ -2034,7 +2034,11 @@
                     currentUser = JSON.parse(userStr);
                     // Update Sidebar User Info
                     if(document.getElementById('userName')) document.getElementById('userName').textContent = currentUser.name || currentUser.fullName || 'User';
-                    if(document.getElementById('userRole')) document.getElementById('userRole').textContent = currentUser.role === 'manager' ? 'Store Manager' : (currentUser.role === 'admin' ? 'Administrator' : (currentUser.role || 'Staff'));
+                    if(document.getElementById('userRole')) {
+                        const _roleLabel = currentUser.role === 'manager' ? 'Store Manager' : (currentUser.role === 'admin' ? 'Administrator' : (currentUser.role || 'Staff'));
+                        const _branchLabel = currentUser.store_location ? ` · ${currentUser.store_location}` : '';
+                        document.getElementById('userRole').textContent = _roleLabel + _branchLabel;
+                    }
                 } catch (e) {
                     console.log('Could not parse currentUser from localStorage');
                 }
@@ -2629,7 +2633,10 @@
                     body: JSON.stringify(newProduct)
                 });
 
-                if (!res.ok) throw new Error('Failed to save');
+                if (!res.ok) {
+                    const errData = await res.json().catch(() => ({}));
+                    throw new Error(errData.message || 'Failed to save');
+                }
                 
                 // If batch number is provided, create/update batch record
                 if (newProduct.batch_number) {
@@ -2654,13 +2661,7 @@
                 loadInventory();
             } catch (err) {
                 console.error(err);
-                let msg = "Error saving product";
-                try {
-                    const errData = await err.response.json();
-                    if (errData.message) msg += ": " + errData.message;
-                } catch(e) {}
-                
-                showNotification(msg, "error");
+                showNotification(err.message || "Error saving product", "error");
             }
         }
 

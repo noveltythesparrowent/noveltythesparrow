@@ -351,7 +351,11 @@
                 if (userStr) {
                     const user = JSON.parse(userStr);
                     if (document.getElementById('userName')) document.getElementById('userName').textContent = user.name || user.fullName || 'User';
-                    if (document.getElementById('userRole')) document.getElementById('userRole').textContent = user.role === 'manager' ? 'Store Manager' : (user.role === 'admin' ? 'Administrator' : (user.role || 'Staff'));
+                    if (document.getElementById('userRole')) {
+                        const _roleLabel = user.role === 'manager' ? 'Store Manager' : (user.role === 'admin' ? 'Administrator' : (user.role || 'Staff'));
+                        const _branchLabel = user.store_location ? ` · ${user.store_location}` : '';
+                        document.getElementById('userRole').textContent = _roleLabel + _branchLabel;
+                    }
                 }
             } catch (e) { console.error(e); }
         });

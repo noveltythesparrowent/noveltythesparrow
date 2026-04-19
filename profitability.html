@@ -182,7 +182,9 @@
             if (userStr) {
                 const user = JSON.parse(userStr);
                 document.getElementById('userName').textContent = user.name || 'User';
-                document.getElementById('userRole').textContent = user.role === 'manager' ? 'Store Manager' : (user.role === 'admin' ? 'Administrator' : (user.role || 'Staff'));
+                const _roleLabel = user.role === 'manager' ? 'Store Manager' : (user.role === 'admin' ? 'Administrator' : (user.role || 'Staff'));
+                const _branchLabel = user.store_location ? ` · ${user.store_location}` : '';
+                document.getElementById('userRole').textContent = _roleLabel + _branchLabel;
             }
 
             try {
@@ -195,7 +197,9 @@
                 const user = data.user;
 
                 document.getElementById('userName').textContent = user.name || 'User';
-                document.getElementById('userRole').textContent = user.role === 'manager' ? 'Store Manager' : (user.role === 'admin' ? 'Administrator' : (user.role || 'Staff'));
+                const _roleLabel2 = user.role === 'manager' ? 'Store Manager' : (user.role === 'admin' ? 'Administrator' : (user.role || 'Staff'));
+                const _branchLabel2 = user.store_location ? ` · ${user.store_location}` : '';
+                document.getElementById('userRole').textContent = _roleLabel2 + _branchLabel2;
                 
                 loadData();
             } catch (error) {
