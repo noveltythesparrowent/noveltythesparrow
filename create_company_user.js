@@ -14,17 +14,17 @@ async function run() {
     
     // Check if company exists
     let companyId = 1;
-    const compRes = await pool.query("SELECT id FROM companies WHERE name ILIKE '%Faith Pharmacy%' LIMIT 1");
+    const compRes = await pool.query("SELECT id FROM companies WHERE name ILIKE '%Novelty The Sparrow%' LIMIT 1");
     if (compRes.rows.length > 0) {
       companyId = compRes.rows[0].id;
     } else {
-      const insertComp = await pool.query("INSERT INTO companies (name, email) VALUES ('Faith Pharmacy', 'sales@faithpharmacy.com') RETURNING id");
+      const insertComp = await pool.query("INSERT INTO companies (name, email) VALUES ('Novelty The Sparrow', 'sales@faithpharmacy.com') RETURNING id");
       companyId = insertComp.rows[0].id;
     }
     
     await pool.query(
       "INSERT INTO company_users (company_id, company_name, contact_person, email, password, role, status) VALUES ($1, $2, $3, $4, $5, 'business_client', 'Active') ON CONFLICT (email) DO UPDATE SET password = $5",
-      [companyId, 'Faith Pharmacy', 'Company Sales', 'sales@faithpharmacy.com', hash]
+      [companyId, 'Novelty The Sparrow', 'Company Sales', 'sales@faithpharmacy.com', hash]
     );
     console.log('Successfully created company user sales@faithpharmacy.com');
   } catch (err) {

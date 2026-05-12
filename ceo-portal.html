@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Faith Pharmacy | CEO Portal</title>
+    <title>Novelty The Sparrow | CEO Portal</title>
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
     <script src="https://cdn.jsdelivr.net/npm/chart.js" crossorigin="anonymous"></script>
     <style>
@@ -370,7 +370,7 @@
         <div class="brand" style="display: flex; flex-direction: column; align-items: center;">
             <img src="logo.png" style="width: 60px; height: 60px; object-fit: contain; border-radius: 8px;">
             <div style="display: flex; flex-direction: column; align-items: center; margin-top: 5px;">
-                <span style="font-size: 20px; line-height: 1;">FAITH PHARMACY</span>
+                <span style="font-size: 20px; line-height: 1;">NOVELTY THE SPARROW</span>
                 <span style="font-size: 10px; letter-spacing: 2px; color: var(--accent-color);">CEO PORTAL</span>
             </div>
         </div>
@@ -2659,8 +2659,8 @@
                                 let stockVal = 0;
                                 if (branchKey !== undefined) {
                                     stockVal = Number(levelsObj[branchKey] || 0);
-                                } else if (selectedBranch.toLowerCase().includes('faith pharmacy') || selectedBranch.toLowerCase().includes('amasaman')) {
-                                    // Robust fallback for Faith Pharmacy/Amasaman to Main Warehouse
+                                } else if (selectedBranch.toLowerCase().includes('novelty the sparrow') || selectedBranch.toLowerCase().includes('amasaman')) {
+                                    // Robust fallback for Novelty The Sparrow/Amasaman to Main Warehouse
                                     const mainKey = branchesKeys.find(k => {
                                         const kl = k.toLowerCase();
                                         return kl === 'main warehouse' || kl.includes('warehouse');
@@ -2734,8 +2734,8 @@
                 const branches = branchesRes.ok ? await branchesRes.json() : [];
 
                 // Build lookup maps for both directions:
-                //   location → branch name   e.g. "Amasaman" → "FAITH PHARMACY"
-                //   branch name → location   e.g. "FAITH PHARMACY" → "Amasaman"
+                //   location → branch name   e.g. "Amasaman" → "NOVELTY THE SPARROW"
+                //   branch name → location   e.g. "NOVELTY THE SPARROW" → "Amasaman"
                 const locationToName = {};  // location → name
                 const nameToLocation = {};  // name → location
                 branches.forEach(b => {
@@ -2768,12 +2768,12 @@
                         totalCheckPoints += targetLocations.length;
 
                         targetLocations.forEach(bLocation => {
-                            const branchName = locationToName[bLocation] || bLocation;  // e.g. "FAITH PHARMACY"
+                            const branchName = locationToName[bLocation] || bLocation;  // e.g. "NOVELTY THE SPARROW"
                             const branchLocation = nameToLocation[branchName] || bLocation; // e.g. "Amasaman"
                             const branchesKeys = Object.keys(levelsObj);
 
                             // Collect all possible candidate keys for this branch and pick the one with highest stock
-                            // This handles phantom zero entries (e.g. "FAITH PHARMACY":0) vs real entries (e.g. "Amasaman":120)
+                            // This handles phantom zero entries (e.g. "NOVELTY THE SPARROW":0) vs real entries (e.g. "Amasaman":120)
                             const candidates = [branchName, branchLocation].filter(Boolean);
                             let stockVal = 0;
                             candidates.forEach(candidate => {

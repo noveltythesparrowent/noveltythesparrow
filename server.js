@@ -4715,7 +4715,7 @@ app.post('/api/ceo/target', authenticateToken, async (req, res) => {
     try {
         await pool.query(`
             INSERT INTO system_settings (id, branch_id, store_name, currency_symbol, vat_rate, receipt_footer, monthly_target)
-            VALUES (1, 1, 'Faith Pharmacy', '₵ (GHS)', 0.00, 'Thank you!', $1)
+            VALUES (1, 1, 'Novelty The Sparrow', '₵ (GHS)', 0.00, 'Thank you!', $1)
             ON CONFLICT (id) DO UPDATE SET monthly_target = $1
         `, [target]);
         await logActivity(req, 'UPDATE_REVENUE_TARGET', { target });
@@ -6149,7 +6149,7 @@ app.post('/api/settings/auth-code', authenticateToken, async (req, res) => {
 
             await pool.query(`
                 INSERT INTO system_settings (id, branch_id, credit_auth_code, credit_auth_code_expiry, store_name, currency_symbol, vat_rate)
-                VALUES ($1, $2, $3, $4, 'Faith Pharmacy', '₵ (GHS)', 0.00)
+                VALUES ($1, $2, $3, $4, 'Novelty The Sparrow', '₵ (GHS)', 0.00)
             `, [nextId, branchId, code, expiry]);
         }
 
