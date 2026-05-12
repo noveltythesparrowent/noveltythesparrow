@@ -201,9 +201,10 @@ button:hover:not(:disabled) {
     color: #777;
 }
 .brand-logo {
-    width: 120px;
-    height: 120px;
-    object-fit: cover;
+    width: 100%;
+    max-width: 250px;
+    height: auto;
+    object-fit: contain;
     margin-bottom: 10px;
 }
 
@@ -245,7 +246,7 @@ button:hover:not(:disabled) {
 <div class="login-panel">
     <div class="login-card">
         <div style="text-align: center; margin-bottom: 20px; margin-top: 40px;">
-            <img src="logo.png" alt="Novelty The Sparrow" style="width: 80px; height: 80px; object-fit: contain; border-radius: 12px;">
+            <img src="logo.png" alt="Novelty The Sparrow" style="width: 100%; max-width: 250px; height: auto; object-fit: contain; margin: 0 auto;">
         </div>
         <h2>Sign in</h2>
         <span>Access your Novelty The Sparrow account</span>
