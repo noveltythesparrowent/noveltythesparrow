@@ -4609,5 +4609,73 @@ function filterTransactionsTable() {
 <footer>© 2026 Novelty The Sparrow
 </footer>
 
+
+<!-- ================== GLOBAL UX FIXES ================== -->
+<style>
+#custom-toast-container { position: fixed; top: 20px; right: 20px; z-index: 999999; display: flex; flex-direction: column; gap: 10px; pointer-events: none; }
+.custom-toast { background: #1a2a6c; color: white; padding: 15px 25px; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.15); font-family: 'Montserrat', sans-serif; font-size: 14px; opacity: 0; transform: translateY(-20px); transition: all 0.3s ease; pointer-events: auto; max-width: 350px; word-wrap: break-word; }
+.custom-toast.show { opacity: 1; transform: translateY(0); }
+.custom-toast.error { background: #e74c3c; border-left: 4px solid #c0392b; }
+.custom-toast.success { background: #27ae60; border-left: 4px solid #2ecc71; }
+</style>
+<script>
+(function() {
+    // 1. Toast Notification Override
+    const container = document.createElement('div');
+    container.id = 'custom-toast-container';
+    document.body.appendChild(container);
+
+    window.alert = function(message) {
+        const toast = document.createElement('div');
+        toast.className = 'custom-toast';
+        if (typeof message === 'string') {
+            const msg = message.toLowerCase();
+            if (msg.includes('error') || msg.includes('fail')) toast.classList.add('error');
+            else if (msg.includes('success') || msg.includes('saved')) toast.classList.add('success');
+        }
+        toast.textContent = message;
+        container.appendChild(toast);
+        toast.offsetHeight; // trigger reflow
+        toast.classList.add('show');
+        setTimeout(() => {
+            toast.classList.remove('show');
+            setTimeout(() => toast.remove(), 300);
+        }, 4000);
+    };
+
+    // 2. Mobile Table Auto-Labeler
+    function applyTableDataLabels() {
+        document.querySelectorAll('.card-table').forEach(table => {
+            const headers = Array.from(table.querySelectorAll('thead th')).map(th => th.textContent.trim());
+            if (headers.length === 0) return;
+            table.querySelectorAll('tbody tr').forEach(tr => {
+                tr.querySelectorAll('td').forEach((td, index) => {
+                    if (headers[index] && !td.hasAttribute('data-label')) {
+                        td.setAttribute('data-label', headers[index]);
+                    }
+                });
+            });
+        });
+    }
+    const tableObserver = new MutationObserver((mutations) => {
+        let shouldUpdate = false;
+        for (const m of mutations) {
+            if (m.addedNodes.length > 0) {
+                shouldUpdate = true;
+                break;
+            }
+        }
+        if (shouldUpdate) applyTableDataLabels();
+    });
+    tableObserver.observe(document.body, { childList: true, subtree: true });
+    
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', applyTableDataLabels);
+    } else {
+        applyTableDataLabels();
+    }
+})();
+</script>
+<!-- ====================================================== -->
 </body>
 </html>

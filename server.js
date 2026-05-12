@@ -22,6 +22,8 @@ const nodemailer = require('nodemailer');
 const PDFDocument = require('pdfkit');
 const JWT_SECRET = process.env.JWT_SECRET;
 if (!JWT_SECRET) throw new Error('FATAL: JWT_SECRET environment variable is not set. Server cannot start.');
+const SESSION_SECRET = process.env.SESSION_SECRET;
+if (!SESSION_SECRET) throw new Error('FATAL: SESSION_SECRET environment variable is not set. Server cannot start.');
 const path = require('path');
 const axios = require('axios');
 const { v4: uuidv4 } = require('uuid');
@@ -1052,7 +1054,7 @@ const sessionConfig = {
         createTableIfMissing: true,
         ttl: 24 * 60 * 60 // 24 hours in seconds
     }),
-    secret: process.env.SESSION_SECRET || crypto.randomBytes(32).toString('hex'),
+    secret: SESSION_SECRET,
     resave: false,
     saveUninitialized: false,
     cookie: {
