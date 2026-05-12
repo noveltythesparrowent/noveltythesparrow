@@ -6620,7 +6620,7 @@ app.post('/api/customers/:id/email-statement', authenticateToken, async (req, re
                     doc.fontSize(10).font('Helvetica-Bold').fillColor('#c62828').text(`GHS ${amountUsed.toFixed(2)}`, 280, summaryY + 40);
 
                     doc.fontSize(9).font('Helvetica').fillColor('#000').text(`Available Credit`, 60, summaryY + 55);
-                    doc.fontSize(10).font('Helvetica-Bold').fillColor('#2e7d32').text(`GHS ${creditAvailable.toFixed(2)}`, 280, summaryY + 55);
+                    doc.fontSize(10).font('Helvetica-Bold').fillColor('#27ae60').text(`GHS ${creditAvailable.toFixed(2)}`, 280, summaryY + 55);
 
                     doc.fillColor('#000');
                     doc.y = summaryY + 90;
@@ -6737,13 +6737,13 @@ app.post('/api/customers/:id/email-statement', authenticateToken, async (req, re
                         doc.fillColor(rowBg).rect(tableX, itemY, pageWidth, 16).fill();
                         doc.rect(tableX, itemY, pageWidth, 16).stroke('#e8e8e8');
 
-                        doc.fillColor(item.isPayment ? '#2e7d32' : '#000').fontSize(8).font(item.isBold ? 'Helvetica-Bold' : 'Helvetica');
+                        doc.fillColor(item.isPayment ? '#27ae60' : '#000').fontSize(8).font(item.isBold ? 'Helvetica-Bold' : 'Helvetica');
                         doc.text(item.date, tableX + 5, itemY + 3, { width: 60 });
                         doc.text(item.name.substring(0, 45), tableX + 70, itemY + 3, { width: 210 });
                         doc.text(item.qty.toString(), tableX + 290, itemY + 3, { width: 40, align: 'center' });
 
                         doc.fillColor('#1a2a6c').font('Helvetica-Bold');
-                        if (item.isPayment) doc.fillColor('#2e7d32'); // Green for payments
+                        if (item.isPayment) doc.fillColor('#27ae60'); // Green for payments
                         doc.text(`GHS ${Math.abs(item.total).toFixed(2)} ${item.isPayment ? '(CR)' : ''}`, tableX + 340, itemY + 3, { width: 80, align: 'right' });
 
                         doc.y = itemY + 17;
@@ -6811,7 +6811,7 @@ app.post('/api/customers/:id/email-statement', authenticateToken, async (req, re
                         </div>
                         <div style="display: flex; justify-content: space-between; margin-bottom: 15px;">
                             <span style="font-size: 13px; color: #666;">Available Credit:</span>
-                            <span style="font-size: 14px; font-weight: bold; color: #2e7d32;">GHS ${(parseFloat(customer.credit_limit) - amountUsed).toFixed(2)}</span>
+                            <span style="font-size: 14px; font-weight: bold; color: #27ae60;">GHS ${(parseFloat(customer.credit_limit) - amountUsed).toFixed(2)}</span>
                         </div>
                     </div>
                     

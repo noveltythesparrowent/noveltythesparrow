@@ -7,7 +7,7 @@
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
     <script src="https://cdn.jsdelivr.net/npm/chart.js" crossorigin="anonymous"></script>
     <style>
-        :root { --primary-color: #0d7a3e; --secondary-color: #065a2b; --accent-color: #4caf50; --text-color: #333; --gray-light: #f5f7fa; --sidebar-width: 260px; }
+        :root { --primary-color: #1a2a6c; --secondary-color: #b21f1f; --accent-color: #fdbb2d; --text-color: #333; --gray-light: #f5f7fa; --sidebar-width: 260px; }
         * { margin: 0; padding: 0; box-sizing: border-box; font-family: 'Poppins', sans-serif; }
         body { background: var(--gray-light); display: flex; flex-direction: column; min-height: 100vh; }
         
@@ -134,7 +134,7 @@
                     <h3 id="grossMargin" style="font-size: 18px;">-</h3>
                     <p>Gross Margin</p>
                 </div>
-                <div class="stat-icon" style="background:#e8f5e9; color:#2e7d32;"><i class="fas fa-percent"></i></div>
+                <div class="stat-icon" style="background:#e8f5e9; color:#27ae60;"><i class="fas fa-percent"></i></div>
             </div>
         </div>
 
@@ -148,12 +148,12 @@
             </div>
             <div class="kpi-card">
                 <div class="kpi-label">Estimated Cost (COGS)</div>
-                <div class="kpi-value" id="totalCost" style="color: #065a2b;">₵0.00</div>
+                <div class="kpi-value" id="totalCost" style="color: #b21f1f;">₵0.00</div>
                 <small>Based on 70% Cost Ratio</small>
             </div>
             <div class="kpi-card">
                 <div class="kpi-label">Net Profit</div>
-                <div class="kpi-value" id="netProfit" style="color: #2e7d32;">₵0.00</div>
+                <div class="kpi-value" id="netProfit" style="color: #27ae60;">₵0.00</div>
                 <small>Revenue - Cost</small>
             </div>
         </div>
@@ -255,7 +255,7 @@
             const cogsSmall = document.querySelector('#totalCost')?.closest('.kpi-card')?.querySelector('small');
             if (cogsSmall) {
                 cogsSmall.textContent = `Real COGS from actual cost prices`;
-                cogsSmall.style.color = '#2e7d32';
+                cogsSmall.style.color = '#27ae60';
             }
             const revenueSmall = document.querySelector('#totalRev')?.closest('.kpi-card')?.querySelector('small');
             if (revenueSmall) revenueSmall.textContent = `Gross Sales · Cost Ratio: ${actualCostRatio}%`;
@@ -361,19 +361,19 @@
                         {
                             label: 'Revenue',
                             data: revData,
-                            backgroundColor: '#0d7a3e'
+                            backgroundColor: '#1a2a6c'
                         },
                         {
                             label: 'Cost',
                             data: costData,
-                            backgroundColor: '#065a2b'
+                            backgroundColor: '#b21f1f'
                         },
                         {
                             label: 'Profit',
                             data: profitData,
-                            backgroundColor: '#2e7d32',
+                            backgroundColor: '#27ae60',
                             type: 'line',
-                            borderColor: '#2e7d32',
+                            borderColor: '#27ae60',
                             borderWidth: 3,
                             fill: false
                         }

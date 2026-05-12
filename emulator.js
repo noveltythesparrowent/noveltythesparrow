@@ -38,7 +38,7 @@
             transform: translateY(-1px);
         }
         .emulator-btn.active {
-            background: #4CAF50;
+            background: #fdbb2d;
             box-shadow: 0 2px 8px rgba(76, 175, 80, 0.4);
         }
         .emulator-label {

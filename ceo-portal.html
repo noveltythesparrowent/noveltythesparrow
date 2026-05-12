@@ -9,15 +9,15 @@
     <style>
         /* Matching dashboard.html colors */
         :root {
-            --primary-color: #0d7a3e;
-            --secondary-color: #065a2b;
-            --accent-color: #4caf50;
+            --primary-color: #1a2a6c;
+            --secondary-color: #b21f1f;
+            --accent-color: #fdbb2d;
             --text-color: #333;
             --light-text: #fff;
             --gray-light: #f5f7fa;
             --sidebar-width: 260px;
-            --success-color: #2e7d32;
-            --warning-color: #ef6c00;
+            --success-color: #27ae60;
+            --warning-color: #f39c12;
         }
         * { margin: 0; padding: 0; box-sizing: border-box; font-family: 'Poppins', sans-serif; }
         body { background: var(--gray-light); display: flex; min-height: 100vh; }
@@ -44,7 +44,7 @@
         .btn-white { background: white; border: 1px solid #e2e8f0; color: #475569; }
         .btn-white:hover { background: #f8fafc; transform: translateY(-1px); }
         .btn-primary { background: var(--primary-color); color: white; }
-        .btn-primary:hover { opacity: 0.9; transform: translateY(-1px); box-shadow: 0 4px 12px rgba(13, 122, 62, 0.2); }
+        .btn-primary:hover { opacity: 0.9; transform: translateY(-1px); box-shadow: 0 4px 12px rgba(26, 42, 108, 0.2); }
 
         /* Tabs */
         .tab-content { display: none; animation: fadeIn 0.3s; }
@@ -90,7 +90,7 @@
         tr:last-child td { border-bottom: none; }
         .status-badge { padding: 4px 10px; border-radius: 20px; font-size: 11px; font-weight: 600; }
         .status-good { background: #e8f5e9; color: var(--success-color); }
-        .status-warn { background: #fff3e0; color: #ef6c00; }
+        .status-warn { background: #fff3e0; color: #f39c12; }
         .status-severe { background: #ffebee; color: #c62828; }
 
         /* AI & Goals Section */
@@ -132,7 +132,7 @@
         .form-group { margin-bottom: 20px; }
         .form-label { display: block; font-size: 13px; font-weight: 600; color: #475569; margin-bottom: 8px; }
         .form-input { width: 100%; padding: 12px; border: 1px solid #e2e8f0; border-radius: 8px; font-size: 14px; outline: none; transition: 0.2s; }
-        .form-input:focus { border-color: var(--primary-color); box-shadow: 0 0 0 3px rgba(13, 122, 62, 0.1); }
+        .form-input:focus { border-color: var(--primary-color); box-shadow: 0 0 0 3px rgba(26, 42, 108, 0.1); }
         .modal-footer { padding: 20px 30px; background: #f8fafc; border-top: 1px solid #f1f5f9; display: flex; justify-content: flex-end; gap: 10px; }
         .step-dots { display: flex; justify-content: center; gap: 8px; margin-bottom: 25px; }
         .dot { width: 8px; height: 8px; border-radius: 50%; background: #e2e8f0; transition: 0.3s; }
@@ -274,7 +274,7 @@
             text-align: center; cursor: pointer; transition: all 0.3s ease; border: 1px solid transparent;
             display: flex; flex-direction: column; align-items: center; justify-content: center;
         }
-        .menu-card:hover { transform: translateY(-5px); box-shadow: 0 15px 30px rgba(0,0,0,0.1); border-color: rgba(13, 122, 62, 0.1); }
+        .menu-card:hover { transform: translateY(-5px); box-shadow: 0 15px 30px rgba(0,0,0,0.1); border-color: rgba(26, 42, 108, 0.1); }
         .menu-card i { font-size: 40px; color: var(--primary-color); margin-bottom: 20px; transition: 0.3s; }
         .menu-card:hover i { transform: scale(1.1); color: var(--secondary-color); }
         .menu-card h3 { font-size: 18px; font-weight: 600; margin-bottom: 10px; color: #333; }
@@ -294,7 +294,7 @@
         .search-icon {
             font-size: 20px; color: #94a3b8;
         }
-        .search-container:focus-within { border-color: var(--primary-color); box-shadow: 0 4px 20px rgba(13, 122, 62, 0.1); }
+        .search-container:focus-within { border-color: var(--primary-color); box-shadow: 0 4px 20px rgba(26, 42, 108, 0.1); }
 
         /* Footer */
         footer {
@@ -1115,7 +1115,7 @@
                     <div class="form-group"><label class="form-label">Branch Name</label><input type="text" id="branchName" class="form-input" placeholder="e.g. Kumasi Branch"></div>
                     <div class="form-group"><label class="form-label">Location</label><input type="text" id="branchLocation" class="form-input" placeholder="e.g. Adum, Kumasi"></div>
                     <div class="form-group"><label class="form-label">VAT Rate (%)</label><input type="number" id="branchVat" class="form-input" placeholder="15.0" step="0.1"></div>
-                    <div class="form-group" style="background:#fff3e0; padding:10px; border-radius:8px; font-size:12px; color:#ef6c00;">
+                    <div class="form-group" style="background:#fff3e0; padding:10px; border-radius:8px; font-size:12px; color:#f39c12;">
                         <i class="fas fa-info-circle"></i> Setting VAT here updates the system settings for this branch immediately.
                     </div>
                 </div>
@@ -1329,7 +1329,7 @@
                     </div>
 
                     <!-- Add New Tax Form -->
-                    <div style="background: #f9f9f9; padding: 15px; border-radius: 6px; border-top: 2px solid #0d7a3e;">
+                    <div style="background: #f9f9f9; padding: 15px; border-radius: 6px; border-top: 2px solid #1a2a6c;">
                         <h3 style="margin-top: 0; font-size: 16px; margin-bottom: 10px;">Add New Tax Rule</h3>
                         <form onsubmit="handleAddTax(event)" style="display: flex; gap: 10px; align-items: flex-end;">
                             <div style="flex: 2;">
@@ -1791,8 +1791,8 @@
                     datasets: [{
                         label: 'Revenue',
                         data: branches.map(b => b.revenue),
-                        borderColor: '#0d7a3e',
-                        backgroundColor: 'rgba(13, 122, 62, 0.1)',
+                        borderColor: '#1a2a6c',
+                        backgroundColor: 'rgba(26, 42, 108, 0.1)',
                         tension: 0.4,
                         fill: true,
                         pointRadius: 5
@@ -1833,7 +1833,7 @@
 
             const labels = products.map(p => p.name);
             const data = products.map(p => parseFloat(p.revenue));
-            const colors = ['#0d7a3e', '#065a2b', '#4caf50', '#2e7d32', '#ef6c00'];
+            const colors = ['#1a2a6c', '#b21f1f', '#fdbb2d', '#27ae60', '#f39c12'];
 
             topProductsChartInstance = new Chart(document.getElementById('topProductsChart'), {
                 type: 'doughnut',
@@ -1879,7 +1879,7 @@
                             datasets: [{
                                 label: 'Transactions',
                                 data: counts,
-                                backgroundColor: '#0d7a3e',
+                                backgroundColor: '#1a2a6c',
                                 borderRadius: 4
                             }]
                         },
@@ -1904,7 +1904,7 @@
                         tbody.innerHTML = txns.map(t => `
                             <tr>
                                 <td data-label="ID">#${(t.receipt_number || t.id).toString().slice(-6)}</td>
-                                <td data-label="Amount" style="font-weight:bold; color:#2e7d32;">₵${parseFloat(t.total_amount).toLocaleString()}</td>
+                                <td data-label="Amount" style="font-weight:bold; color:#27ae60;">₵${parseFloat(t.total_amount).toLocaleString()}</td>
                                 <td data-label="Branch">${t.store_location || 'Main'}</td>
                                 <td data-label="Cashier">${t.cashier_name || 'Unknown'}</td>
                                 <td data-label="Time" style="color:#666; font-size:12px;">${new Date(t.created_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</td>
@@ -1949,7 +1949,7 @@
             
             const labels = stats.map(s => s.payment_method.toUpperCase());
             const data = stats.map(s => parseFloat(s.total));
-            const colors = ['#0d7a3e', '#4caf50', '#2e7d32', '#065a2b', '#666'];
+            const colors = ['#1a2a6c', '#fdbb2d', '#27ae60', '#b21f1f', '#666'];
 
             paymentChartInstance = new Chart(document.getElementById('paymentChart'), {
                 type: 'doughnut',
@@ -1985,9 +1985,9 @@
                     datasets: [{
                         data: [cogs, opex, netProfit],
                         backgroundColor: [
-                            '#4caf50', // COGS (Accent - Yellow/Orange)
-                            '#065a2b', // OpEx (Red)
-                            '#2e7d32'  // Profit (Green)
+                            '#fdbb2d', // COGS (Accent - Yellow/Orange)
+                            '#b21f1f', // OpEx (Red)
+                            '#27ae60'  // Profit (Green)
                         ],
                         borderWidth: 0
                     }]
@@ -2034,8 +2034,8 @@
                                 {
                                     label: 'Revenue',
                                     data: data.revenue || [],
-                                    backgroundColor: '#0d7a3e',
-                                    borderColor: '#0d7a3e',
+                                    backgroundColor: '#1a2a6c',
+                                    borderColor: '#1a2a6c',
                                     tension: 0.4,
                                     fill: false,
                                     yAxisID: 'y'
@@ -2043,8 +2043,8 @@
                                 {
                                     label: 'Costs',
                                     data: data.costs || [],
-                                    backgroundColor: '#065a2b',
-                                    borderColor: '#065a2b',
+                                    backgroundColor: '#b21f1f',
+                                    borderColor: '#b21f1f',
                                     tension: 0.4,
                                     fill: false,
                                     yAxisID: 'y'
@@ -2052,7 +2052,7 @@
                                 {
                                     label: 'AI Forecast',
                                     data: data.forecast || [],
-                                    borderColor: '#4caf50',
+                                    borderColor: '#fdbb2d',
                                     borderDash: [5, 5],
                                     tension: 0.4,
                                     fill: false,
@@ -2117,7 +2117,7 @@
                 tbody.innerHTML = paginatedUsers.map(u => {
                     const actionBtn = u.status === 'Active' 
                         ? `<button class="btn-control btn-white" style="padding:4px 10px; font-size:11px; color:#c62828; border-color:#ffcdd2;" onclick="toggleUserStatus(${u.id}, 'Inactive')">Deactivate</button>`
-                        : `<button class="btn-control btn-white" style="padding:4px 10px; font-size:11px; color:#2e7d32; border-color:#c8e6c9;" onclick="toggleUserStatus(${u.id}, 'Active')">Activate</button>`;
+                        : `<button class="btn-control btn-white" style="padding:4px 10px; font-size:11px; color:#27ae60; border-color:#c8e6c9;" onclick="toggleUserStatus(${u.id}, 'Active')">Activate</button>`;
                     
                     const editBtn = `<button class="btn-control btn-white" style="padding:4px 10px; font-size:11px; margin-right:5px;" onclick="openEditUserModal(${u.id})">Edit</button>`;
 
@@ -2366,7 +2366,7 @@
                             </tr>
                         `).join('');
                     } else {
-                        tbody.innerHTML = '<tr><td colspan="4" style="text-align:center; color:#2e7d32;"><i class="fas fa-check-circle"></i> No active risks detected.</td></tr>';
+                        tbody.innerHTML = '<tr><td colspan="4" style="text-align:center; color:#27ae60;"><i class="fas fa-check-circle"></i> No active risks detected.</td></tr>';
                     }
                 }
             } catch(e) { console.error(e); }
@@ -2524,7 +2524,7 @@
                     <div class="form-group"><label class="form-label">Account Number</label><div class="form-input" style="background:#f8fafc;">${customer.account_number || 'Pending'}</div></div>
                     <div class="form-group"><label class="form-label">Phone</label><div class="form-input" style="background:#f8fafc;">${customer.phone || 'N/A'}</div></div>
                     <div class="form-group"><label class="form-label">Email</label><div class="form-input" style="background:#f8fafc;">${customer.email || 'N/A'}</div></div>
-                    <div class="form-group"><label class="form-label">${limitLabel}</label><div class="form-input" style="background:#f8fafc; font-weight:bold; color:#0d7a3e;">₵${parseFloat(displayLimit).toLocaleString()}</div></div>
+                    <div class="form-group"><label class="form-label">${limitLabel}</label><div class="form-input" style="background:#f8fafc; font-weight:bold; color:#1a2a6c;">₵${parseFloat(displayLimit).toLocaleString()}</div></div>
                     <div class="form-group"><label class="form-label">Date Requested</label><div class="form-input" style="background:#f8fafc;">${new Date(customer.created_at).toLocaleString()}</div></div>
                     <div class="form-group"><label class="form-label">Requested By</label><div class="form-input" style="background:#f8fafc;">${customer.created_by_name || 'Unknown'}</div></div>
                     <div class="form-group"><label class="form-label">Branch</label><div class="form-input" style="background:#f8fafc;">${customer.branch || 'N/A'}</div></div>
@@ -2859,7 +2859,7 @@
                     <tr>
                         <td data-label="Item Name" style="font-weight:600; color:var(--primary-color);">${i.name}</td>
                         <td data-label="Branch"><span style="font-size:12px; color:#666; background:#f1f5f9; padding:2px 8px; border-radius:4px;">${i.branch}</span></td>
-                        <td data-label="Stock Level" style="${isCritical ? 'color:#c62828;' : 'color:#ef6c00;'} font-weight:bold;">${i.stock}</td>
+                        <td data-label="Stock Level" style="${isCritical ? 'color:#c62828;' : 'color:#f39c12;'} font-weight:bold;">${i.stock}</td>
                         <td data-label="Reorder Level" style="color:#64748b;">${i.reorder}</td>
                         <td data-label="Status">
                             <span class="status-badge ${statusClass}" style="letter-spacing:0.5px; font-size:10px;">${statusText}</span>
@@ -3193,7 +3193,7 @@
             const labels = data.map(d => d.branch || d.name);
             const revenueData = data.map(d => parseFloat(d.revenue));
             const txnData = data.map(d => parseInt(d.txn_count));
-            const colors = ['#0d7a3e', '#065a2b', '#4caf50', '#2e7d32', '#ef6c00', '#666'];
+            const colors = ['#1a2a6c', '#b21f1f', '#fdbb2d', '#27ae60', '#f39c12', '#666'];
 
             // Revenue Donut (Shows Share)
             if (opsRevenueChartInstance) opsRevenueChartInstance.destroy();
@@ -3241,8 +3241,8 @@
                     datasets: [{
                         label: 'Branches',
                         data: scatterData,
-                        backgroundColor: 'rgba(13, 122, 62, 0.6)',
-                        borderColor: '#0d7a3e',
+                        backgroundColor: 'rgba(26, 42, 108, 0.6)',
+                        borderColor: '#1a2a6c',
                         pointRadius: 6,
                         pointHoverRadius: 8
                     }]
@@ -3621,10 +3621,10 @@
             // User Message
             body.innerHTML += `
                 <div style="display: flex; gap: 10px; margin-bottom: 15px; justify-content: flex-end;">
-                    <div style="background: #0d7a3e; color: white; padding: 10px 15px; border-radius: 15px 0 15px 15px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); max-width: 80%; font-size: 14px; line-height: 1.5;">
+                    <div style="background: #1a2a6c; color: white; padding: 10px 15px; border-radius: 15px 0 15px 15px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); max-width: 80%; font-size: 14px; line-height: 1.5;">
                         ${text}
                     </div>
-                    <div style="width: 35px; height: 35px; background: #0d7a3e; border-radius: 50%; display: flex; align-items: center; justify-content: center; color: white; flex-shrink: 0;"><i class="fas fa-user"></i></div>
+                    <div style="width: 35px; height: 35px; background: #1a2a6c; border-radius: 50%; display: flex; align-items: center; justify-content: center; color: white; flex-shrink: 0;"><i class="fas fa-user"></i></div>
                 </div>
             `;
             

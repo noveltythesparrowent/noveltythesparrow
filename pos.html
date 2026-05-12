@@ -10,9 +10,9 @@
 
     <style>
         :root {
-            --primary: #0d7a3e;
-            --secondary: #065a2b;
-            --accent: #4caf50;
+            --primary: #1a2a6c;
+            --secondary: #b21f1f;
+            --accent: #fdbb2d;
             --bg: #f5f7fa;
             --border: #e0e0e0;
         }
@@ -363,7 +363,7 @@
         .product-price {
             font-size: 18px;
             font-weight: bold;
-            color: #2e7d32;
+            color: #27ae60;
         }
 
         .product-option.selected .product-price {
@@ -541,7 +541,7 @@
         }
 
         .btn-pay {
-            background: #2e7d32;
+            background: #27ae60;
         }
 
         .btn-cancel {
@@ -585,7 +585,7 @@
         }
 
         .notification.success {
-            background: #2e7d32;
+            background: #27ae60;
         }
 
         .notification.error {
@@ -656,7 +656,7 @@
 
         .token-input:focus {
             border-color: var(--primary);
-            box-shadow: 0 0 0 4px rgba(13, 122, 62, 0.1);
+            box-shadow: 0 0 0 4px rgba(26, 42, 108, 0.1);
         }
 
         /* CREDIT SALE MODAL */
@@ -1165,7 +1165,7 @@
     <!-- Receipt Prompt Modal -->
     <div id="receiptPromptModal" class="token-modal">
         <div class="token-content" style="max-width: 400px;">
-            <div style="font-size: 48px; color: #2e7d32; margin-bottom: 15px;"><i class="fas fa-check-circle"></i></div>
+            <div style="font-size: 48px; color: #27ae60; margin-bottom: 15px;"><i class="fas fa-check-circle"></i></div>
             <h3 style="color:var(--primary); margin-bottom:10px;">Sale Successful!</h3>
             <p style="color:#666; font-size:14px; margin-bottom:25px;">Would you like to print a receipt for this
                 transaction?</p>
@@ -1203,7 +1203,7 @@
                     <div class="customer-detail-row"
                         style="margin-top:5px; border-top:1px dashed #ccc; padding-top:5px;">
                         <strong>Available Credit:</strong> <strong id="ccAvailable"
-                            style="color:#2e7d32;">₵0.00</strong>
+                            style="color:#27ae60;">₵0.00</strong>
                     </div>
                 </div>
 
@@ -1360,7 +1360,7 @@
                 <button onclick="openReceiptSearch()" title="Search Receipt" style="background: #ff9800;">
                     <i class="fas fa-receipt"></i>
                 </button>
-                <button id="refreshProducts" title="Refresh Products" style="background: #4CAF50;">
+                <button id="refreshProducts" title="Refresh Products" style="background: #fdbb2d;">
                     <i class="fas fa-sync-alt"></i>
                 </button>
             </div>
@@ -1594,7 +1594,7 @@
             // Provide visual feedback
             const reader = document.getElementById('reader');
             if (reader) {
-                reader.style.border = '3px solid #4CAF50';
+                reader.style.border = '3px solid #fdbb2d';
                 setTimeout(() => reader.style.border = '', 300);
             }
         }
@@ -2850,7 +2850,7 @@
                         `<button class="qty-btn" onclick="updateQty(${index}, -1)" title="Remove from return">-</button>
                          <input type="number" value="${item.qty}" min="0" max="${item.qty}" style="width:35px; text-align:center; padding:2px; border:1px solid #ff9800; border-radius:4px; font-size: 12px; background:#fff3e0;" 
                              onchange="setQty(${index}, this.value)" onclick="this.select()">
-                         <button class="qty-btn" onclick="updateQty(${index}, 1)" title="Keep item" style="background:#4CAF50;">+</button>` :
+                         <button class="qty-btn" onclick="updateQty(${index}, 1)" title="Keep item" style="background:#fdbb2d;">+</button>` :
                         `<button class="qty-btn" onclick="updateQty(${index}, -1)">-</button>
                          <input type="number" value="${item.qty}" min="1" style="width:35px; text-align:center; padding:2px; border:1px solid #ddd; border-radius:4px; font-size: 12px;" 
                              onchange="setQty(${index}, this.value)" onclick="this.select()">
@@ -3316,14 +3316,14 @@
             if (available >= saleTotal) {
                 btn.disabled = false;
                 btn.textContent = "Confirm Credit Sale";
-                btn.style.background = "#2e7d32"; // Green
+                btn.style.background = "#27ae60"; // Green
             } else {
                 // Since manager authorized, maybe allow override? 
                 // For now, let's allow it but warn, or strictly block. 
                 // Based on "apply the credit", let's assume manager auth allows override.
                 btn.disabled = false;
                 btn.textContent = "⚠️ Limit Exceeded - Confirm Anyway";
-                btn.style.background = "#ef6c00"; // Orange
+                btn.style.background = "#f39c12"; // Orange
             }
         }
 
@@ -3402,7 +3402,7 @@
 
                     // 3. Redirect to Receipt
                     btn.textContent = "Complete";
-                    btn.style.background = "#2e7d32";
+                    btn.style.background = "#27ae60";
                     setTimeout(() => {
                         closeCreditSaleModal();
                         customerChannel.postMessage({ type: 'TRANSACTION_COMPLETE' });
@@ -3749,7 +3749,7 @@
                     <div style="font-size:12px; color:#666;">${date} • ${order.cart.length} items • <strong>₵${total.toFixed(2)}</strong></div>
                 </div>
                 <div>
-                    <button onclick="retrieveOrder(${index})" class="parked-btn" style="background:#2e7d32;">Retrieve</button>
+                    <button onclick="retrieveOrder(${index})" class="parked-btn" style="background:#27ae60;">Retrieve</button>
                     <button onclick="discardOrder(${index})" class="parked-btn" style="background:#c62828;"><i class="fas fa-trash"></i></button>
                 </div>
             </div>

@@ -13,9 +13,9 @@
 
 <style>
 :root {
-    --primary-color: #0d7a3e; /* Pharmacy Green */
-    --secondary-color: #065a2b; /* Dark Green */
-    --accent-color: #4caf50; /* Light Green */
+    --primary-color: #1a2a6c; /* Pharmacy Green */
+    --secondary-color: #b21f1f; /* Dark Green */
+    --accent-color: #fdbb2d; /* Light Green */
     --text-color: #333;
     --light-text: #fff;
     --gray-light: #f5f7fa;
@@ -485,13 +485,13 @@ tr:hover {
 .btn-primary {
     background: var(--primary-color);
     color: white;
-    box-shadow: 0 2px 8px rgba(13, 122, 62, 0.3);
+    box-shadow: 0 2px 8px rgba(26, 42, 108, 0.3);
 }
 
 .btn-primary:hover {
     background: #095e2e;
     transform: translateY(-2px);
-    box-shadow: 0 4px 12px rgba(13, 122, 62, 0.4);
+    box-shadow: 0 4px 12px rgba(26, 42, 108, 0.4);
 }
 
 .btn-success {
@@ -527,7 +527,7 @@ tr:hover {
     flex: 1;
     padding: 0 !important;
     height: 52px;
-    background: linear-gradient(135deg, #0d7a3e 0%, #065a2b 60%, #4caf50 100%);
+    background: linear-gradient(135deg, #1a2a6c 0%, #b21f1f 60%, #fdbb2d 100%);
     color: white;
     border: none;
     border-radius: 14px !important;
@@ -538,7 +538,7 @@ tr:hover {
     cursor: pointer;
     position: relative;
     overflow: hidden;
-    box-shadow: 0 6px 20px rgba(13, 122, 62, 0.35);
+    box-shadow: 0 6px 20px rgba(26, 42, 108, 0.35);
     transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
     display: inline-flex;
     align-items: center;
@@ -558,7 +558,7 @@ tr:hover {
 
 .btn-pay-main:hover {
     transform: translateY(-3px);
-    box-shadow: 0 12px 32px rgba(13, 122, 62, 0.45);
+    box-shadow: 0 12px 32px rgba(26, 42, 108, 0.45);
 }
 
 .btn-pay-main:hover::after { opacity: 1; }
@@ -566,8 +566,8 @@ tr:hover {
 .btn-pay-main:active { transform: translateY(0); }
 
 @keyframes pay-pulse {
-    0%, 100% { box-shadow: 0 6px 20px rgba(13, 122, 62, 0.35); }
-    50% { box-shadow: 0 8px 28px rgba(13, 122, 62, 0.55), 0 0 0 4px rgba(13, 122, 62, 0.12); }
+    0%, 100% { box-shadow: 0 6px 20px rgba(26, 42, 108, 0.35); }
+    50% { box-shadow: 0 8px 28px rgba(26, 42, 108, 0.55), 0 0 0 4px rgba(26, 42, 108, 0.12); }
 }
 
 .btn-pay-main.has-items {
@@ -579,7 +579,7 @@ tr:hover {
     flex: 1;
     padding: 0 !important;
     height: 52px;
-    background: linear-gradient(135deg, #0d7a3e, #065a2b);
+    background: linear-gradient(135deg, #1a2a6c, #b21f1f);
     color: white;
     border: none;
     border-radius: 14px !important;
@@ -645,19 +645,19 @@ tr:hover {
 .btn-proforma:hover {
     background: var(--secondary-color);
     color: white;
-    box-shadow: 0 4px 14px rgba(6, 90, 43, 0.3);
+    box-shadow: 0 4px 14px rgba(178, 31, 31, 0.3);
     transform: translateY(-2px);
 }
 
 .btn-invoice {
     background: transparent;
     color: #ca8a04 !important;
-    border: 2px solid #4caf50 !important;
+    border: 2px solid #fdbb2d !important;
 }
 
 .btn-invoice:hover {
-    background: linear-gradient(135deg, #4caf50, #f59e0b);
-    color: #0d7a3e;
+    background: linear-gradient(135deg, #fdbb2d, #f59e0b);
+    color: #1a2a6c;
     box-shadow: 0 4px 14px rgba(253, 187, 45, 0.4);
     transform: translateY(-2px);
 }
@@ -781,7 +781,7 @@ tr:hover {
 .form-group textarea:focus {
     outline: none;
     border-color: var(--primary-color);
-    box-shadow: 0 0 0 3px rgba(13, 122, 62, 0.1);
+    box-shadow: 0 0 0 3px rgba(26, 42, 108, 0.1);
 }
 
 .remove-item {
@@ -901,7 +901,7 @@ tr:hover {
 .customer-form input:focus {
     outline: none;
     border-color: var(--primary-color);
-    box-shadow: 0 0 0 2px rgba(13, 122, 62, 0.1);
+    box-shadow: 0 0 0 2px rgba(26, 42, 108, 0.1);
 }
 
 /* Cart Section - POS Style */
@@ -1061,7 +1061,7 @@ tr:hover {
 }
 
 .summary-row.total {
-    background: linear-gradient(135deg, #0d7a3e, #065a2b);
+    background: linear-gradient(135deg, #1a2a6c, #b21f1f);
     color: white;
     border-radius: 12px;
     padding: 12px 14px;
@@ -1070,7 +1070,7 @@ tr:hover {
     font-size: 17px;
     font-weight: 800;
     letter-spacing: 0.5px;
-    box-shadow: 0 4px 16px rgba(13, 122, 62, 0.22);
+    box-shadow: 0 4px 16px rgba(26, 42, 108, 0.22);
 }
 
 .summary-row.total span:last-child {
@@ -1087,7 +1087,7 @@ tr:hover {
 .pay-btn {
     flex: 1;
     padding: 14px;
-    background: #2e7d32;
+    background: #27ae60;
     color: white;
     border: none;
     border-radius: 8px;
@@ -1202,7 +1202,7 @@ footer {
 .search-bar input:focus {
     outline: none;
     border-color: var(--primary-color);
-    box-shadow: 0 0 0 3px rgba(13, 122, 62, 0.1);
+    box-shadow: 0 0 0 3px rgba(26, 42, 108, 0.1);
 }
 
 .search-bar button {
@@ -1745,7 +1745,7 @@ footer {
     bottom: 40px;
     left: 50%;
     transform: translateX(-50%) translateY(120px);
-    background: linear-gradient(135deg, rgba(13, 122, 62, 0.96), rgba(6, 90, 43, 0.96));
+    background: linear-gradient(135deg, rgba(26, 42, 108, 0.96), rgba(178, 31, 31, 0.96));
     backdrop-filter: blur(10px);
     color: white;
     padding: 18px 28px 16px;
@@ -1790,7 +1790,7 @@ footer {
 
 .at-btn-confirm {
     background: white;
-    color: #0d7a3e;
+    color: #1a2a6c;
 }
 
 .at-btn-confirm:hover {
@@ -2597,7 +2597,7 @@ footer {
     <div id="quickCreditModal" class="modal">
         <div class="modal-content" style="max-width: 450px;">
             <div class="modal-header">
-                <h2 style="color: #0d7a3e;"><i class="fas fa-credit-card"></i> Credit Sale Selection</h2>
+                <h2 style="color: #1a2a6c;"><i class="fas fa-credit-card"></i> Credit Sale Selection</h2>
                 <button class="close-btn" onclick="closeQuickCreditModal()">&times;</button>
             </div>
             <div class="modal-body">
@@ -2639,7 +2639,7 @@ footer {
 
                 <div style="margin-top: 25px; display: flex; gap: 10px;">
                     <button class="btn" style="flex: 1; background: #f1f5f9; color: #475569;" onclick="closeQuickCreditModal()">Cancel</button>
-                    <button id="btnConfirmQuickCredit" class="btn" style="flex: 2; background: linear-gradient(135deg, #0d7a3e, #065a2b); color: white;" disabled onclick="processQuickCreditSale()">
+                    <button id="btnConfirmQuickCredit" class="btn" style="flex: 2; background: linear-gradient(135deg, #1a2a6c, #b21f1f); color: white;" disabled onclick="processQuickCreditSale()">
                         Select Client to Confirm
                     </button>
                 </div>
@@ -3076,7 +3076,7 @@ function selectQuickCreditCustomer(id) {
     } else {
         alert.style.display = 'none';
         btn.disabled = false;
-        btn.style.background = 'linear-gradient(135deg, #0d7a3e, #065a2b)'; // brand gradient
+        btn.style.background = 'linear-gradient(135deg, #1a2a6c, #b21f1f)'; // brand gradient
         btn.textContent = "Confirm & Bill to Credit";
     }
 }

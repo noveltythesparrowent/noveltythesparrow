@@ -7,10 +7,10 @@
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
     <style>
         :root {
-            --primary-color: #0d7a3e;
-            --secondary-color: #065a2b;
+            --primary-color: #1a2a6c;
+            --secondary-color: #b21f1f;
             --gray-light: #f5f7fa;
-            --success-color: #2e7d32;
+            --success-color: #27ae60;
         }
         * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Poppins', sans-serif; }
         body { background: var(--gray-light); min-height: 100vh; display: flex; flex-direction: column; }
@@ -162,7 +162,7 @@
         }
         .token-input:focus {
             border-color: var(--primary-color);
-            box-shadow: 0 0 0 4px rgba(13, 122, 62, 0.1);
+            box-shadow: 0 0 0 4px rgba(26, 42, 108, 0.1);
         }
 
         /* Credit Customer Search Styles */
@@ -286,13 +286,13 @@
                     <div class="customer-detail-row"><span>Credit Limit:</span> <span id="ccLimit">₵0.00</span></div>
                     <div class="customer-detail-row"><span>Current Debt:</span> <span id="ccDebt" style="color:#c62828;">₵0.00</span></div>
                     <div class="customer-detail-row" style="border-top:1px dashed #ccc; padding-top:5px; margin-top:5px;">
-                        <strong>Available:</strong> <strong id="ccAvailable" style="color:#2e7d32;">₵0.00</strong>
+                        <strong>Available:</strong> <strong id="ccAvailable" style="color:#27ae60;">₵0.00</strong>
                     </div>
                 </div>
 
                 <div id="creditOverrideUI" style="display:none; text-align: center; margin-top: 10px; padding-top: 10px; border-top: 1px dashed #ddd;">
                     <p style="color: #c62828; font-size: 13px; margin-bottom: 10px;">Credit limit exceeded.</p>
-                    <button type="button" onclick="requestOverride()" style="background: #ef6c00; color: white; border: none; padding: 10px 20px; border-radius: 6px; cursor: pointer; font-weight: 600;">
+                    <button type="button" onclick="requestOverride()" style="background: #f39c12; color: white; border: none; padding: 10px 20px; border-radius: 6px; cursor: pointer; font-weight: 600;">
                         <i class="fas fa-user-shield"></i> Request Manager Override
                     </button>
                 </div>
