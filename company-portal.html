@@ -80,7 +80,7 @@ body { background: var(--gray-light); display: flex; flex-direction: column; min
 .nav-item {
     display: flex; 
     align-items: center; 
-    padding: 15px 25px;
+    padding: 12px 25px;
     color: rgba(255,255,255,0.7); 
     text-decoration: none; 
     transition: 0.3s;
@@ -2484,7 +2484,7 @@ footer {
             <div class="modal-body" id="transactionModalBody">
                 <!-- Content will be injected here -->
             </div>
-            <div class="modal-footer" style="padding: 15px 25px; border-top: 1px solid #eee; display: flex; justify-content: flex-end; gap: 10px;">
+            <div class="modal-footer" style="padding: 12px 25px; border-top: 1px solid #eee; display: flex; justify-content: flex-end; gap: 10px;">
                 <button class="btn-sm" style="background: #6c757d; color: white;" onclick="document.getElementById('transactionModal').classList.remove('active')">Close</button>
                 <button id="downloadTransactionBtn" class="btn-sm" style="background: var(--primary-color); color: white;">
                     <i class="fas fa-download"></i> Download PDF
@@ -4614,7 +4614,7 @@ function filterTransactionsTable() {
 <!-- ================== GLOBAL UX FIXES ================== -->
 <style>
 #custom-toast-container { position: fixed; top: 20px; right: 20px; z-index: 999999; display: flex; flex-direction: column; gap: 10px; pointer-events: none; }
-.custom-toast { background: #1a2a6c; color: white; padding: 15px 25px; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.15); font-family: 'Montserrat', sans-serif; font-size: 14px; opacity: 0; transform: translateY(-20px); transition: all 0.3s ease; pointer-events: auto; max-width: 350px; word-wrap: break-word; }
+.custom-toast { background: #1a2a6c; color: white; padding: 12px 25px; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.15); font-family: 'Montserrat', sans-serif; font-size: 14px; opacity: 0; transform: translateY(-20px); transition: all 0.3s ease; pointer-events: auto; max-width: 350px; word-wrap: break-word; }
 .custom-toast.show { opacity: 1; transform: translateY(0); }
 .custom-toast.error { background: #e74c3c; border-left: 4px solid #c0392b; }
 .custom-toast.success { background: #27ae60; border-left: 4px solid #2ecc71; }

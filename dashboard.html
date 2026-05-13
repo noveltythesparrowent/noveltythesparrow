@@ -73,7 +73,7 @@
         .brand { padding: 25px; font-size: 24px; font-weight: 700; letter-spacing: 1px; border-bottom: 1px solid rgba(255,255,255,0.1); font-family: 'Montserrat', sans-serif; display: flex; align-items: center; gap: 10px; }
         .nav-links { flex: 1; padding-top: 20px; }
         .nav-item {
-            display: flex; align-items: center; padding: 15px 25px;
+            display: flex; align-items: center; padding: 12px 25px;
             color: rgba(255,255,255,0.7); text-decoration: none; transition: 0.3s;
         }
         .nav-item:hover, .nav-item.active { background: rgba(255,255,255,0.1); color: white; border-left: 4px solid var(--accent-color); }
@@ -249,14 +249,14 @@
             <a href="dashboard" class="nav-item active"><i class="fas fa-home"></i> Dashboard</a>
             
             <div class="nav-section">Sales & Finance</div>
-            <a href="sales-dashboard" class="nav-item"><i class="fas fa-chart-pie"></i> Sales Dashboard</a>
+            <a href="sales-dashboard" class="nav-item"><i class="fas fa-chart-pie"></i> Sales</a>
             <a href="profitability" class="nav-item"><i class="fas fa-file-invoice-dollar"></i> Profitability</a>
             <a href="promotions" class="nav-item"><i class="fas fa-tags"></i> Promotions</a>
 
             <div class="nav-section">Operations</div>
-            <a href="pos-register" class="nav-item"><i class="fas fa-users"></i> Staff Management</a>
-            <a href="credit-customers" class="nav-item"><i class="fas fa-address-book"></i> Credit Clients</a>
-            <a href="inventory" class="nav-item"><i class="fas fa-warehouse"></i> Inventory & Supply Chain</a>
+            <a href="pos-register" class="nav-item"><i class="fas fa-users"></i> Staff</a>
+            <a href="credit-customers" class="nav-item"><i class="fas fa-address-book"></i> Credit</a>
+            <a href="inventory" class="nav-item"><i class="fas fa-warehouse"></i> Inventory</a>
             <a href="reports" class="nav-item"><i class="fas fa-chart-line"></i> Reports</a>
             <a href="settings" class="nav-item"><i class="fas fa-cog"></i> Settings</a>
         </div>
@@ -603,7 +603,7 @@
 <!-- ================== GLOBAL UX FIXES ================== -->
 <style>
 #custom-toast-container { position: fixed; top: 20px; right: 20px; z-index: 999999; display: flex; flex-direction: column; gap: 10px; pointer-events: none; }
-.custom-toast { background: #1a2a6c; color: white; padding: 15px 25px; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.15); font-family: 'Montserrat', sans-serif; font-size: 14px; opacity: 0; transform: translateY(-20px); transition: all 0.3s ease; pointer-events: auto; max-width: 350px; word-wrap: break-word; }
+.custom-toast { background: #1a2a6c; color: white; padding: 12px 25px; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.15); font-family: 'Montserrat', sans-serif; font-size: 14px; opacity: 0; transform: translateY(-20px); transition: all 0.3s ease; pointer-events: auto; max-width: 350px; word-wrap: break-word; }
 .custom-toast.show { opacity: 1; transform: translateY(0); }
 .custom-toast.error { background: #e74c3c; border-left: 4px solid #c0392b; }
 .custom-toast.success { background: #27ae60; border-left: 4px solid #2ecc71; }
