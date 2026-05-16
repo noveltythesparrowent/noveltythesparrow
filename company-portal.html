@@ -1871,6 +1871,9 @@ footer {
             <a href="#" class="nav-item" data-tab="tax-management">
                 <i class="fas fa-percentage"></i> Tax Management
             </a>
+            <a href="#" class="nav-item" data-tab="company-profile">
+                <i class="fas fa-building"></i> Company Profile
+            </a>
             <a href="#" class="nav-item" data-tab="settings">
                 <i class="fas fa-cog"></i> Settings
             </a>
@@ -2345,6 +2348,137 @@ footer {
                         </tbody>
                     </table>
                 </div>
+            </div>
+        </div>
+
+        <!-- Company Profile Tab -->
+        <div id="company-profile" class="tab-content">
+            <header>
+                <div style="display: flex; align-items: center;">
+                    <button class="mobile-menu-btn" onclick="toggleSidebar()"><i class="fas fa-bars"></i></button>
+                    <div class="header-title">
+                        <h2>Company Profile</h2>
+                        <p>View and manage your company information</p>
+                    </div>
+                </div>
+            </header>
+
+            <!-- Profile Header Card -->
+            <div class="content-section" style="background: linear-gradient(135deg, var(--primary-color) 0%, var(--secondary-color) 60%, var(--accent-color) 100%); color: white; position: relative; overflow: hidden;">
+                <div style="position: absolute; top: -30px; right: -30px; width: 180px; height: 180px; border-radius: 50%; background: rgba(255,255,255,0.06);"></div>
+                <div style="position: absolute; bottom: -50px; right: 60px; width: 120px; height: 120px; border-radius: 50%; background: rgba(255,255,255,0.04);"></div>
+                <div style="display: flex; align-items: center; gap: 24px; position: relative; z-index: 1;">
+                    <div style="width: 80px; height: 80px; border-radius: 16px; background: rgba(255,255,255,0.15); display: flex; align-items: center; justify-content: center; font-size: 36px; backdrop-filter: blur(10px); border: 1px solid rgba(255,255,255,0.2);">
+                        <i class="fas fa-building"></i>
+                    </div>
+                    <div style="flex: 1;">
+                        <h2 id="profileCompanyName" style="font-size: 28px; font-weight: 800; margin-bottom: 4px; letter-spacing: -0.5px;">Loading...</h2>
+                        <p style="opacity: 0.85; font-size: 14px; margin-bottom: 8px;"><i class="fas fa-envelope" style="margin-right: 6px;"></i> <span id="profileEmail">—</span></p>
+                        <div style="display: flex; gap: 10px; flex-wrap: wrap;">
+                            <span id="profileStatusBadge" style="background: rgba(39,174,96,0.2); border: 1px solid rgba(39,174,96,0.4); color: #2ecc71; padding: 3px 12px; border-radius: 20px; font-size: 12px; font-weight: 600;">Active</span>
+                            <span style="background: rgba(255,255,255,0.12); border: 1px solid rgba(255,255,255,0.2); padding: 3px 12px; border-radius: 20px; font-size: 12px; font-weight: 600;"><i class="fas fa-briefcase" style="margin-right: 4px;"></i> Business Client</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Profile Details Grid -->
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(380px, 1fr)); gap: 24px; margin-top: 24px;">
+                
+                <!-- Contact Information Card -->
+                <div class="content-section">
+                    <div class="section-header" style="border-bottom-color: #f0f0f0;">
+                        <h3 class="section-title" style="display: flex; align-items: center; gap: 10px;">
+                            <span style="width: 36px; height: 36px; border-radius: 10px; background: linear-gradient(135deg, var(--primary-color), #3d5af1); display: flex; align-items: center; justify-content: center; color: white; font-size: 14px;"><i class="fas fa-address-card"></i></span>
+                            Contact Information
+                        </h3>
+                    </div>
+                    <form id="profileContactForm">
+                        <div style="display: flex; flex-direction: column; gap: 18px;">
+                            <div class="form-group">
+                                <label style="font-size: 12px; font-weight: 700; color: #64748b; text-transform: uppercase; letter-spacing: 0.5px;">Contact Person</label>
+                                <input type="text" id="profileContactPerson" placeholder="Full name of contact person">
+                            </div>
+                            <div class="form-group">
+                                <label style="font-size: 12px; font-weight: 700; color: #64748b; text-transform: uppercase; letter-spacing: 0.5px;">Phone Number</label>
+                                <input type="tel" id="profilePhone" placeholder="+233-XX-XXX-XXXX">
+                            </div>
+                            <div class="form-group">
+                                <label style="font-size: 12px; font-weight: 700; color: #64748b; text-transform: uppercase; letter-spacing: 0.5px;">Email Address</label>
+                                <input type="email" id="profileEmailInput" placeholder="company@example.com" disabled style="background: #f8fafc; cursor: not-allowed;">
+                            </div>
+                            <div class="form-group">
+                                <label style="font-size: 12px; font-weight: 700; color: #64748b; text-transform: uppercase; letter-spacing: 0.5px;">Business Address</label>
+                                <textarea id="profileAddress" rows="3" style="resize: vertical;" placeholder="Street address, city, region"></textarea>
+                            </div>
+                        </div>
+                    </form>
+                </div>
+
+                <!-- Business Details Card -->
+                <div class="content-section">
+                    <div class="section-header" style="border-bottom-color: #f0f0f0;">
+                        <h3 class="section-title" style="display: flex; align-items: center; gap: 10px;">
+                            <span style="width: 36px; height: 36px; border-radius: 10px; background: linear-gradient(135deg, #f39c12, #e67e22); display: flex; align-items: center; justify-content: center; color: white; font-size: 14px;"><i class="fas fa-id-badge"></i></span>
+                            Business Details
+                        </h3>
+                    </div>
+                    <form id="profileBusinessForm">
+                        <div style="display: flex; flex-direction: column; gap: 18px;">
+                            <div class="form-group">
+                                <label style="font-size: 12px; font-weight: 700; color: #64748b; text-transform: uppercase; letter-spacing: 0.5px;">Company Name</label>
+                                <input type="text" id="profileCompanyNameInput" placeholder="Your company name">
+                            </div>
+                            <div class="form-group">
+                                <label style="font-size: 12px; font-weight: 700; color: #64748b; text-transform: uppercase; letter-spacing: 0.5px;">Tax ID / TIN</label>
+                                <input type="text" id="profileTaxId" placeholder="GH-XXXXXXXXX">
+                            </div>
+                            <div class="form-group">
+                                <label style="font-size: 12px; font-weight: 700; color: #64748b; text-transform: uppercase; letter-spacing: 0.5px;">Registration Number</label>
+                                <input type="text" id="profileRegNumber" placeholder="REG-XXXX-XXX">
+                            </div>
+                            <div class="form-group">
+                                <label style="font-size: 12px; font-weight: 700; color: #64748b; text-transform: uppercase; letter-spacing: 0.5px;">Account Status</label>
+                                <div id="profileStatusDisplay" style="padding: 12px 16px; background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 8px; color: #16a34a; font-weight: 600; font-size: 14px;">
+                                    <i class="fas fa-check-circle" style="margin-right: 6px;"></i> Active
+                                </div>
+                            </div>
+                        </div>
+                    </form>
+                </div>
+            </div>
+
+            <!-- Change Password Section -->
+            <div class="content-section" style="margin-top: 24px;">
+                <div class="section-header" style="border-bottom-color: #f0f0f0;">
+                    <h3 class="section-title" style="display: flex; align-items: center; gap: 10px;">
+                        <span style="width: 36px; height: 36px; border-radius: 10px; background: linear-gradient(135deg, #e74c3c, #c0392b); display: flex; align-items: center; justify-content: center; color: white; font-size: 14px;"><i class="fas fa-lock"></i></span>
+                        Security — Change Password
+                    </h3>
+                </div>
+                <form id="profilePasswordForm" onsubmit="handleChangePassword(event)">
+                    <div class="form-grid">
+                        <div class="form-group">
+                            <label style="font-size: 12px; font-weight: 700; color: #64748b; text-transform: uppercase; letter-spacing: 0.5px;">Current Password</label>
+                            <input type="password" id="profileCurrentPassword" placeholder="Enter current password" required>
+                        </div>
+                        <div class="form-group">
+                            <label style="font-size: 12px; font-weight: 700; color: #64748b; text-transform: uppercase; letter-spacing: 0.5px;">New Password</label>
+                            <input type="password" id="profileNewPassword" placeholder="Minimum 6 characters" required minlength="6">
+                        </div>
+                        <div class="form-group">
+                            <label style="font-size: 12px; font-weight: 700; color: #64748b; text-transform: uppercase; letter-spacing: 0.5px;">Confirm New Password</label>
+                            <input type="password" id="profileConfirmPassword" placeholder="Re-enter new password" required minlength="6">
+                        </div>
+                    </div>
+                    <button type="submit" class="btn" style="background: linear-gradient(135deg, #e74c3c, #c0392b); color: white; margin-top: 10px;"><i class="fas fa-key"></i> Update Password</button>
+                </form>
+            </div>
+
+            <!-- Save Profile Button -->
+            <div style="margin-top: 24px; display: flex; justify-content: flex-end; gap: 12px;">
+                <button class="btn" style="background: #f1f5f9; color: #475569;" onclick="loadCompanyProfile()"><i class="fas fa-undo"></i> Reset</button>
+                <button class="btn btn-primary" onclick="handleSaveProfile()"><i class="fas fa-save"></i> Save Profile</button>
             </div>
         </div>
 
@@ -2863,6 +2997,7 @@ document.querySelectorAll('.nav-item').forEach(item => {
         if (tabId === 'proforma') loadProformaInvoices();
         if (tabId === 'transactions') loadCompanyTransactions();
         if (tabId === 'settings') loadCompanySettings();
+        if (tabId === 'company-profile') loadCompanyProfile();
     });
 });
 
@@ -4527,6 +4662,141 @@ async function handleSaveCompanySettings(e) {
     } catch (e) { console.error(e); }
 }
 
+// ===== COMPANY PROFILE FUNCTIONS =====
+async function loadCompanyProfile() {
+    const token = localStorage.getItem('companyToken');
+    try {
+        const response = await fetch('/api/company/profile', {
+            headers: { 'Authorization': `Bearer ${token}` }
+        });
+        if (response.ok) {
+            const data = await response.json();
+            const profile = data.profile;
+            
+            // Update header card
+            document.getElementById('profileCompanyName').textContent = profile.company_name || 'Company Name';
+            document.getElementById('profileEmail').textContent = profile.email || '—';
+            
+            // Status badge
+            const badge = document.getElementById('profileStatusBadge');
+            if (profile.status === 'Active') {
+                badge.textContent = 'Active';
+                badge.style.background = 'rgba(39,174,96,0.2)';
+                badge.style.borderColor = 'rgba(39,174,96,0.4)';
+                badge.style.color = '#2ecc71';
+            } else {
+                badge.textContent = profile.status || 'Inactive';
+                badge.style.background = 'rgba(231,76,60,0.2)';
+                badge.style.borderColor = 'rgba(231,76,60,0.4)';
+                badge.style.color = '#e74c3c';
+            }
+            
+            // Contact form
+            document.getElementById('profileContactPerson').value = profile.contact_person || '';
+            document.getElementById('profilePhone').value = profile.phone || '';
+            document.getElementById('profileEmailInput').value = profile.email || '';
+            document.getElementById('profileAddress').value = profile.address || '';
+            
+            // Business form
+            document.getElementById('profileCompanyNameInput').value = profile.company_name || '';
+            document.getElementById('profileTaxId').value = profile.tax_id || '';
+            document.getElementById('profileRegNumber').value = profile.registration_number || '';
+            
+            // Status display
+            const statusDisplay = document.getElementById('profileStatusDisplay');
+            if (profile.status === 'Active') {
+                statusDisplay.innerHTML = '<i class="fas fa-check-circle" style="margin-right: 6px;"></i> Active';
+                statusDisplay.style.background = '#f0fdf4';
+                statusDisplay.style.borderColor = '#bbf7d0';
+                statusDisplay.style.color = '#16a34a';
+            } else {
+                statusDisplay.innerHTML = '<i class="fas fa-times-circle" style="margin-right: 6px;"></i> ' + (profile.status || 'Inactive');
+                statusDisplay.style.background = '#fef2f2';
+                statusDisplay.style.borderColor = '#fecaca';
+                statusDisplay.style.color = '#dc2626';
+            }
+        }
+    } catch (error) {
+        console.error('Error loading company profile:', error);
+    }
+}
+
+async function handleSaveProfile() {
+    const token = localStorage.getItem('companyToken');
+    const profileData = {
+        company_name: document.getElementById('profileCompanyNameInput').value,
+        contact_person: document.getElementById('profileContactPerson').value,
+        phone: document.getElementById('profilePhone').value,
+        address: document.getElementById('profileAddress').value,
+        tax_id: document.getElementById('profileTaxId').value,
+        registration_number: document.getElementById('profileRegNumber').value
+    };
+    
+    try {
+        const response = await fetch('/api/company/profile', {
+            method: 'PUT',
+            headers: { 
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${token}`
+            },
+            body: JSON.stringify(profileData)
+        });
+        
+        if (response.ok) {
+            showToast('Profile updated successfully!');
+            // Refresh the profile display
+            loadCompanyProfile();
+            // Also update the sidebar user name
+            document.getElementById('userName').textContent = profileData.company_name || 'Company User';
+        } else {
+            const err = await response.json();
+            showToast(err.message || 'Failed to update profile', 'error');
+        }
+    } catch (error) {
+        console.error('Error saving profile:', error);
+        showToast('Error saving profile', 'error');
+    }
+}
+
+async function handleChangePassword(e) {
+    e.preventDefault();
+    const token = localStorage.getItem('companyToken');
+    const currentPassword = document.getElementById('profileCurrentPassword').value;
+    const newPassword = document.getElementById('profileNewPassword').value;
+    const confirmPassword = document.getElementById('profileConfirmPassword').value;
+    
+    if (newPassword !== confirmPassword) {
+        showToast('New passwords do not match', 'error');
+        return;
+    }
+    
+    if (newPassword.length < 6) {
+        showToast('Password must be at least 6 characters', 'error');
+        return;
+    }
+    
+    try {
+        const response = await fetch('/api/company/change-password', {
+            method: 'POST',
+            headers: { 
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${token}`
+            },
+            body: JSON.stringify({ currentPassword, newPassword })
+        });
+        
+        if (response.ok) {
+            showToast('Password changed successfully!');
+            document.getElementById('profilePasswordForm').reset();
+        } else {
+            const err = await response.json();
+            showToast(err.message || 'Failed to change password', 'error');
+        }
+    } catch (error) {
+        console.error('Error changing password:', error);
+        showToast('Error changing password', 'error');
+    }
+}
 
 
 function viewTransaction(trx) {

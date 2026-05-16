@@ -187,8 +187,10 @@ async function initDb() {
                 phone VARCHAR(50),
                 email VARCHAR(255),
                 address TEXT,
+                registration_number VARCHAR(100),
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
+            ALTER TABLE companies ADD COLUMN IF NOT EXISTS registration_number VARCHAR(100);
         `);
 
         // Force explicit separate creation for company_users to prevent transaction pooling drops
@@ -1512,6 +1514,99 @@ app.post('/api/company/logout', async (req, res) => {
         res.clearCookie('pos.sid');
         res.json({ message: 'Logged out successfully' });
     });
+});
+
+// ============ COMPANY PROFILE ENDPOINTS ============
+
+// Get Company Profile
+app.get('/api/company/profile', authenticateToken, async (req, res) => {
+    try {
+        const userId = req.user.id;
+        const result = await pool.query(
+            `SELECT cu.id, cu.company_name, cu.contact_person, cu.email, cu.phone, cu.address, cu.status, cu.role,
+                    c.tax_id, c.registration_number
+             FROM company_users cu
+             LEFT JOIN companies c ON cu.company_id = c.id
+             WHERE cu.id = $1`,
+            [userId]
+        );
+        
+        if (result.rows.length === 0) {
+            return res.status(404).json({ message: 'Company profile not found' });
+        }
+        
+        res.json({ profile: result.rows[0] });
+    } catch (error) {
+        console.error('Error fetching company profile:', error);
+        res.status(500).json({ message: 'Error fetching company profile' });
+    }
+});
+
+// Update Company Profile
+app.put('/api/company/profile', authenticateToken, async (req, res) => {
+    try {
+        const userId = req.user.id;
+        const { company_name, contact_person, phone, address, tax_id, registration_number } = req.body;
+        
+        // Update company_users table
+        await pool.query(
+            `UPDATE company_users 
+             SET company_name = $1, contact_person = $2, phone = $3, address = $4
+             WHERE id = $5`,
+            [company_name, contact_person, phone, address, userId]
+        );
+        
+        // Update companies table (tax_id, registration_number)
+        const userRow = await pool.query('SELECT company_id FROM company_users WHERE id = $1', [userId]);
+        if (userRow.rows.length > 0 && userRow.rows[0].company_id) {
+            await pool.query(
+                `UPDATE companies SET name = $1, phone = $2, address = $3, tax_id = $4, registration_number = $5
+                 WHERE id = $6`,
+                [company_name, phone, address, tax_id, registration_number, userRow.rows[0].company_id]
+            );
+        }
+        
+        res.json({ success: true, message: 'Profile updated successfully' });
+    } catch (error) {
+        console.error('Error updating company profile:', error);
+        res.status(500).json({ message: 'Error updating company profile' });
+    }
+});
+
+// Change Company Password
+app.post('/api/company/change-password', authenticateToken, async (req, res) => {
+    try {
+        const userId = req.user.id;
+        const { currentPassword, newPassword } = req.body;
+        
+        if (!currentPassword || !newPassword) {
+            return res.status(400).json({ message: 'Current and new passwords are required' });
+        }
+        
+        if (newPassword.length < 6) {
+            return res.status(400).json({ message: 'New password must be at least 6 characters' });
+        }
+        
+        // Verify current password
+        const userResult = await pool.query('SELECT password FROM company_users WHERE id = $1', [userId]);
+        if (userResult.rows.length === 0) {
+            return res.status(404).json({ message: 'User not found' });
+        }
+        
+        const validPassword = await bcrypt.compare(currentPassword, userResult.rows[0].password);
+        if (!validPassword) {
+            return res.status(401).json({ message: 'Current password is incorrect' });
+        }
+        
+        // Hash and update new password
+        const hashedPassword = await bcrypt.hash(newPassword, 10);
+        await pool.query('UPDATE company_users SET password = $1 WHERE id = $2', [hashedPassword, userId]);
+        
+        res.json({ success: true, message: 'Password changed successfully' });
+    } catch (error) {
+        console.error('Error changing password:', error);
+        res.status(500).json({ message: 'Error changing password' });
+    }
 });
 
 // ============ USER MANAGEMENT ENDPOINTS ============

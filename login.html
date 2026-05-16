@@ -315,11 +315,8 @@ async function login() {
     btn.textContent = "Signing in...";
 
     try {
-        // Try company login first for company emails
-        const isCompanyEmail = email.toLowerCase().includes('company') || email.toLowerCase().includes('companysales');
-        const endpoint = isCompanyEmail ? '/api/company/login' : '/login';
-        
-        const res = await fetch(endpoint, {
+        // Try staff login first, then fall back to company login
+        const staffRes = await fetch('/login', {
             method: "POST",
             headers: { 
                 "Content-Type": "application/json",
@@ -329,36 +326,35 @@ async function login() {
             credentials: 'include'
         });
 
-        const data = await res.json();
+        const staffData = await staffRes.json();
 
-        if (!res.ok) {
-            // If company login fails and it was a company email, try staff login
-            if (isCompanyEmail && endpoint === '/api/company/login') {
-                const staffRes = await fetch('/login', {
-                    method: "POST",
-                    headers: { 
-                        "Content-Type": "application/json",
-                        "Accept": "application/json"
-                    },
-                    body: JSON.stringify({ email, password }),
-                    credentials: 'include'
-                });
-
-                const staffData = await staffRes.json();
-                if (!staffRes.ok) {
-                    throw new Error(staffData.message || "Login failed");
-                }
-                
-                // Staff login successful
-                handleSuccessfulLogin(staffData, 'staff');
-                return;
-            }
-            throw new Error(data.message || "Login failed");
+        if (staffRes.ok) {
+            // Staff login successful
+            handleSuccessfulLogin(staffData, 'staff');
+            return;
         }
 
-        // Successful login
-        const userType = endpoint === '/api/company/login' ? 'company' : 'staff';
-        handleSuccessfulLogin(data, userType);
+        // Staff login failed — try company login
+        const companyRes = await fetch('/api/company/login', {
+            method: "POST",
+            headers: { 
+                "Content-Type": "application/json",
+                "Accept": "application/json"
+            },
+            body: JSON.stringify({ email, password }),
+            credentials: 'include'
+        });
+
+        const companyData = await companyRes.json();
+
+        if (companyRes.ok) {
+            // Company login successful
+            handleSuccessfulLogin(companyData, 'company');
+            return;
+        }
+
+        // Both failed
+        throw new Error(companyData.message || staffData.message || "Invalid credentials");
 
     } catch (err) {
         console.error('Login error:', err);
